@@ -1,0 +1,122 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:padding="16dp"
+    android:background="#F8F9FA">
+
+    <TextView
+        android:id="@+id/ocr_header"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="SAHI SCAN · GOOGLE ML KIT OCR"
+        android:textSize="18sp"
+        android:textStyle="bold"
+        android:textColor="#1B3B2B"
+        android:paddingBottom="8dp" />
+
+    <TextView
+        android:id="@+id/ocr_status"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="STATE: READY"
+        android:textSize="14sp"
+        android:textStyle="bold"
+        android:textColor="#2D5A27"
+        android:background="#E8F5E9"
+        android:padding="10dp" />
+
+    <ProgressBar
+        android:id="@+id/ocr_progress"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center_horizontal"
+        android:layout_margin="8dp"
+        android:visibility="gone" />
+
+    <ImageView
+        android:id="@+id/ocr_image_preview"
+        android:layout_width="match_parent"
+        android:layout_height="140dp"
+        android:layout_marginTop="8dp"
+        android:scaleType="fitCenter"
+        android:background="#E0E0E0"
+        android:contentDescription="Selected food package preview"
+        android:visibility="gone" />
+
+    <LinearLayout
+        android:id="@+id/ocr_action_layout"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:layout_marginTop="10dp">
+
+        <Button
+            android:id="@+id/ocr_gallery"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="Select Food Image"
+            android:layout_marginEnd="4dp" />
+
+        <Button
+            android:id="@+id/ocr_capture"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="Capture Photo"
+            android:layout_marginStart="4dp" />
+    </LinearLayout>
+
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Extracted OCR Text:"
+        android:layout_marginTop="12dp"
+        android:textSize="14sp"
+        android:textStyle="bold"
+        android:textColor="#333333"/>
+
+    <ScrollView
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:layout_marginTop="4dp"
+        android:background="#FFFFFF"
+        android:padding="8dp">
+
+        <TextView
+            android:id="@+id/ocr_result"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:textSize="14sp"
+            android:textColor="#111111"
+            android:textIsSelectable="true"
+            android:text="[No image processed yet]"/>
+    </ScrollView>
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:layout_marginTop="8dp">
+
+        <Button
+            android:id="@+id/ocr_scan_again"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="Scan Again"
+            android:layout_marginEnd="4dp" />
+
+        <Button
+            android:id="@+id/ocr_copy"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="Copy Text"
+            android:layout_marginStart="4dp" />
+    </LinearLayout>
+
+</LinearLayout>
