@@ -23,8 +23,6 @@ NUTRIENT_PATTERNS = {
     "fiber": [r"(?:dietary\s+)?f(?:i|1)ber\s*[:\-]?\s*(\d+(?:\.\d+)?)\s*g"],
 }
 
-BARCODE_RE = re.compile(r"(?<!\d)(\d{8,14})(?!\d)")
-
 def _clean(text: str) -> str:
     text = text.replace("\x0c", " ")
     text = re.sub(r"[ \t]+", " ", text)
@@ -32,23 +30,37 @@ def _clean(text: str) -> str:
 
 def _decode_codes(img: np.ndarray) -> list[dict[str, str]]:
     found: list[dict[str, str]] = []
+    if img is None or not hasattr(cv2, "barcode"):
+        return found
+
+    height, width = img.shape[:2]
+    scale = min(1.0, 2000 / max(height, width))
+    working = cv2.resize(img, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA) if scale < 1 else img
+    gray = cv2.cvtColor(working, cv2.COLOR_BGR2GRAY) if len(working.shape) == 3 else working
+    variants = [working, gray, cv2.rotate(gray, cv2.ROTATE_90_CLOCKWISE), cv2.rotate(gray, cv2.ROTATE_180), cv2.rotate(gray, cv2.ROTATE_90_COUNTERCLOCKWISE)]
+    detector = cv2.barcode.BarcodeDetector()
     qr = cv2.QRCodeDetector()
-    try:
-        value, _, _ = qr.detectAndDecode(img)
-        if value:
-            found.append({"type": "QR", "value": value})
-    except Exception:
-        pass
-    try:
-        detector = cv2.barcode.BarcodeDetector()
-        ok, decoded, types, _ = detector.detectAndDecode(img)
-        if ok and decoded is not None:
-            for value, code_type in zip(decoded, types or []):
-                if value:
-                    found.append({"type": str(code_type), "value": str(value)})
-    except Exception:
-        pass
-    # OCR is deliberately a fallback for printed EAN/UPC digits.
+    seen = set()
+    for variant in variants:
+        try:
+            value, _, _ = qr.detectAndDecode(variant)
+            if value and ("QR", value) not in seen:
+                found.append({"type": "QR", "value": value})
+                seen.add(("QR", value))
+        except Exception:
+            pass
+        try:
+            ok, decoded, types, _ = detector.detectAndDecode(variant)
+            type_values = list(types) if types is not None else []
+            if ok and decoded is not None:
+                for value, code_type in zip(list(decoded), type_values):
+                    value = str(value)
+                    code_type = str(code_type)
+                    if value and (code_type, value) not in seen:
+                        found.append({"type": code_type, "value": value})
+                        seen.add((code_type, value))
+        except Exception:
+            pass
     return found
 
 def _ocr_text(img: Image.Image) -> tuple[str, str | None]:
@@ -72,7 +84,6 @@ def _ocr_text(img: Image.Image) -> tuple[str, str | None]:
 def _extract_fields(text: str, codes: list[dict[str, str]]) -> dict[str, Any]:
     low = text.lower()
     barcodes = [x["value"] for x in codes if re.fullmatch(r"\d{8,14}", x["value"])]
-    barcodes += BARCODE_RE.findall(text)
     # preserve order and remove duplicates
     barcodes = list(dict.fromkeys(barcodes))
     # FSSAI licence digits are not a product barcode. Keep them in their own field.
@@ -116,7 +127,12 @@ def analyze_image(path: str | Path) -> dict[str, Any]:
         image = Image.open(path)
     except Exception as exc:
         return {"status": "UNCLEAR", "error": f"Invalid image: {exc}", "text": "", "codes": [], "fields": {}}
-    cv_image = cv2.imread(str(path))
+    cv_image = None
+    try:
+        oriented = ImageOps.exif_transpose(image).convert("RGB")
+        cv_image = cv2.cvtColor(np.array(oriented), cv2.COLOR_RGB2BGR)
+    except Exception:
+        cv_image = cv2.imread(str(path))
     codes = _decode_codes(cv_image) if cv_image is not None else []
     text, error = _ocr_text(image)
     fields = _extract_fields(text, codes)
