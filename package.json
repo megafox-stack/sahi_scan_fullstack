@@ -10,6 +10,8 @@
   },
   "dependencies": {
     "@capacitor/android": "^8.5.2",
+    "@capacitor/barcode-scanner": "^3.1.2",
+    "@capacitor/camera": "^8.2.4",
     "@capacitor/cli": "^8.5.2",
     "@capacitor/core": "^8.5.2",
     "@vitejs/plugin-react": "^4.3.4",

@@ -16,6 +16,18 @@ router = APIRouter()
 UPLOAD_DIR = Path(__file__).resolve().parents[2] / "uploads"
 UPLOAD_DIR.mkdir(exist_ok=True)
 
+@router.post("/auth/guest", response_model=Token)
+def guest_login(db: Session = Depends(get_db)):
+    """Temporary device-testing account; remove or disable before deployment."""
+    email = "device-guest@sahiscan.local"
+    user = db.query(User).filter_by(email=email).first()
+    if not user:
+        user = User(email=email, password_hash=hash_password(uuid4().hex), name="Device Guest")
+        db.add(user); db.flush()
+        db.add(Profile(user_id=user.id, name="Me", profile_type="Custom", icon="🙂", sodium_mg=600, sugar_g=10))
+        db.commit(); db.refresh(user)
+    return {"access_token": create_access_token(str(user.id)), "token_type": "bearer"}
+
 @router.post("/auth/register", response_model=Token)
 def register(data: AuthRegister, db: Session = Depends(get_db)):
     if db.query(User).filter_by(email=data.email.lower()).first(): raise HTTPException(409, "Email already registered")

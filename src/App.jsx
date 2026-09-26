@@ -1,7 +1,17 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { Camera, CameraResultType, CameraSource } from "@capacitor/camera";
+import {
+  CapacitorBarcodeScanner,
+  CapacitorBarcodeScannerAndroidScanningLibrary,
+  CapacitorBarcodeScannerCameraDirection,
+  CapacitorBarcodeScannerScanOrientation,
+  CapacitorBarcodeScannerTypeHint
+} from "@capacitor/barcode-scanner";
 
-const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://localhost:8000/api/v1";
+//const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://localhost:8000/api/v1";
+const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://192.168.0.141:8000/api/v1";
+
+
 
 async function api(path, options = {}) {
   const token = localStorage.getItem("sahi_scan_token");
@@ -85,10 +95,26 @@ const PRODUCTS = {
 */
 const SCAN_RESULTS = [];
 
+const PROFILE_PHOTOS = {
+  me: "/profiles/me.png",
+  child: "/profiles/child.png",
+  amma: "/profiles/mother.png",
+  mother: "/profiles/mother.png"
+};
+
+function profilePhotoFor(id, name) {
+  return PROFILE_PHOTOS[String(name || "").trim().toLowerCase()] || PROFILE_PHOTOS[String(id).toLowerCase()] || null;
+}
+
+function ProfilePicture({ profile, size }) {
+  if (!profile.photo || profile.useAvatarSymbol) return profile.icon;
+  return <img src={profile.photo} alt={`${profile.name} profile`} style={{ width: size, height: size, objectFit: "cover", borderRadius: "50%", display: "inline-block", verticalAlign: "middle" }} />;
+}
+
 const INITIAL_PROFILES = [
-  { id: "me", name: "Me", icon: "🙂", template: "Custom", sodium: 600, sugar: 10 },
-  { id: "amma", name: "Amma", icon: "👩", template: "Elderly", sodium: 400, sugar: 10 },
-  { id: "child", name: "Child", icon: "🧒", template: "Child", sodium: 700, sugar: 12 }
+  { id: "me", name: "Me", icon: "🙂", photo: PROFILE_PHOTOS.me, template: "Custom", sodium: 600, sugar: 10 },
+  { id: "amma", name: "Amma", icon: "👩", photo: PROFILE_PHOTOS.amma, template: "Elderly", sodium: 400, sugar: 10 },
+  { id: "child", name: "Child", icon: "🧒", photo: PROFILE_PHOTOS.child, template: "Child", sodium: 700, sugar: 12 }
 ];
 
 const LANGUAGE_OPTIONS = [
@@ -154,24 +180,44 @@ function App() {
   const [imageProcessing, setImageProcessing] = useState(false);
   const [ocrResult, setOcrResult] = useState("");
   const [ocrState, setOcrState] = useState("READY");
-  const [ocrMessage, setOcrMessage] = useState("Select a food image to run Google ML Kit OCR.");
+  const [ocrMessage, setOcrMessage] = useState("Take or choose a label photo to read its text.");
   const [ocrPreviewUrl, setOcrPreviewUrl] = useState(null);
 
   const profile = profiles.find(p => p.id === activeProfile) || profiles[0];
+
+  useEffect(() => {
+    if (!toast) return undefined;
+    const timeout = window.setTimeout(() => setToast(""), 3200);
+    return () => window.clearTimeout(timeout);
+  }, [toast]);
 
   useEffect(() => {
     let cancelled = false;
     const bootstrap = async () => {
       try {
         let token = localStorage.getItem("sahi_scan_token");
-        if (!token) {
-          setBackendReady(false);
-          return;
+        const guestToken = async () => {
+          const response = await fetch(`${API_BASE}/auth/guest`, { method: "POST" });
+          if (!response.ok) throw new Error(`Guest access failed (${response.status})`);
+          const data = await response.json();
+          localStorage.setItem("sahi_scan_token", data.access_token);
+          return data.access_token;
+        };
+        if (!token) token = await guestToken();
+
+        let bootstrapData;
+        try {
+          bootstrapData = await Promise.all([api("/profiles"), api("/scans"), api("/favorites")]);
+        } catch (error) {
+          // A previously saved token may belong to an expired or reset backend session.
+          localStorage.removeItem("sahi_scan_token");
+          token = await guestToken();
+          bootstrapData = await Promise.all([api("/profiles"), api("/scans"), api("/favorites")]);
         }
-        const [serverProfiles, serverScans, serverFavorites] = await Promise.all([api("/profiles"), api("/scans"), api("/favorites")]);
+        const [serverProfiles, serverScans, serverFavorites] = bootstrapData;
         if (cancelled) return;
         if (serverProfiles.length) {
-          setProfiles(serverProfiles.map(p => ({ id: String(p.id), name: p.name, icon: p.icon, template: p.profile_type, sodium: p.sodium_mg, sugar: p.sugar_g })));
+          setProfiles(serverProfiles.map(p => ({ id: String(p.id), name: p.name, icon: p.icon, photo: p.preferences?.avatar_photo || profilePhotoFor(p.id, p.name), useAvatarSymbol: Boolean(p.preferences?.use_avatar_symbol), template: p.profile_type, sodium: p.sodium_mg, sugar: p.sugar_g, preferences: p.preferences || {} })));
           const amma = serverProfiles.find(p => p.name.toLowerCase() === "amma") || serverProfiles[0];
           setActiveProfile(String(amma.id));
         }
@@ -181,6 +227,7 @@ function App() {
       } catch (error) {
         console.warn("Sahi Scan backend unavailable.", error);
         setBackendReady(false);
+        setToast("Could not connect to the backend. Check that it is running and the device is on the same Wi-Fi network.");
       }
     };
     bootstrap();
@@ -203,14 +250,14 @@ function App() {
     const previewUrl = URL.createObjectURL(file);
     setOcrPreviewUrl(previewUrl);
     setOcrState("PROCESSING_IMAGE");
-    setOcrMessage("Loading image file...");
+    setOcrMessage("Preparing your label photo…");
     setOcrResult("");
 
     const reader = new FileReader();
     reader.onload = async () => {
       const base64Data = reader.result;
       setOcrState("RUNNING_OCR");
-      setOcrMessage("Running Tesseract4Android OCR on device...");
+      setOcrMessage("Reading the text on your label…");
 
       const ocrPlugin = window.Capacitor?.Plugins?.OcrPlugin;
       if (ocrPlugin && typeof ocrPlugin.processImageUri === "function") {
@@ -221,14 +268,14 @@ function App() {
             setOcrMessage(response.message || "");
             if (response.state === "OCR_COMPLETE") {
               setOcrResult(response.text);
-              setToast("Real text extracted using Tesseract4Android.");
+              setToast("Label text extracted.");
             } else if (response.state === "NO_TEXT_DETECTED") {
               setOcrResult("");
-              setOcrMessage("No text detected.");
-              setToast("No text detected in the selected image.");
+              setOcrMessage("We couldn’t read text in this photo. Try a clearer image.");
+              setToast("No readable text found in this photo.");
             } else {
               setOcrResult("");
-              setToast("OCR state: " + response.state);
+              setToast(response.message || "The label could not be read.");
             }
           } else {
             setOcrState("OCR_ERROR");
@@ -236,18 +283,18 @@ function App() {
           }
         } catch (err) {
           setOcrState("OCR_ERROR");
-          setOcrMessage("Tesseract OCR error: " + (err.message || String(err)));
+            setOcrMessage("Could not read this label: " + (err.message || String(err)));
         }
       } else {
         setOcrState("NO_TEXT_DETECTED");
-        setOcrMessage("Tesseract4Android OCR is native on Android. Please test on an Android emulator or device.");
+        setOcrMessage("Open the Android app to read text from a label photo.");
         setOcrResult("");
-        setToast("Please test on Android device/emulator for Tesseract4Android OCR.");
+        setToast("Label reading is available in the Android app.");
       }
     };
     reader.onerror = () => {
       setOcrState("OCR_ERROR");
-      setOcrMessage("Error reading image file.");
+      setOcrMessage("Could not open this photo. Please choose another image.");
     };
     reader.readAsDataURL(file);
   };
@@ -278,14 +325,53 @@ function App() {
   const resetOcrState = () => {
     setOcrState("READY");
     setOcrResult("");
-    setOcrMessage("Select a food image to run Google ML Kit OCR.");
+    setOcrMessage("Take or choose a label photo to read its text.");
     setOcrPreviewUrl(null);
   };
 
-  const scan = async (code = "8901234567890") => {
+  const scan = async (knownCode = null) => {
     setScanning(true);
     setToast("");
     setPage("scan");
+    let code = knownCode;
+    if (!code) {
+      try {
+        if (window.Capacitor?.isNativePlatform?.()) {
+          let permission = await Camera.checkPermissions();
+          if (permission.camera !== "granted") {
+            permission = await Camera.requestPermissions({ permissions: ["camera"] });
+          }
+          if (permission.camera !== "granted") {
+            setToast("Camera access is off. Allow camera permission to scan barcodes.");
+            setScanning(false);
+            return;
+          }
+        }
+        const result = await CapacitorBarcodeScanner.scanBarcode({
+          hint: CapacitorBarcodeScannerTypeHint.ALL,
+          scanInstructions: "Place the product barcode inside the frame",
+          cameraDirection: CapacitorBarcodeScannerCameraDirection.BACK,
+          scanOrientation: CapacitorBarcodeScannerScanOrientation.PORTRAIT,
+          android: { scanningLibrary: CapacitorBarcodeScannerAndroidScanningLibrary.ZXING }
+        });
+        code = result?.ScanResult?.trim();
+      } catch (error) {
+        console.warn("Barcode scan cancelled or unavailable", error);
+        const errorText = String(error?.message || error).toLowerCase();
+        const cancelled = /cancel|dismiss|closed|back/.test(errorText);
+        const cameraUnavailable = /camera|permission|hardware|unavailable|not supported/.test(errorText);
+        if (!cancelled && cameraUnavailable) {
+          setToast("Camera is unavailable. Check camera permission and try again.");
+        }
+        setScanning(false);
+        return;
+      }
+    }
+    if (!code) {
+      setToast("No barcode was scanned. Try again and keep the barcode inside the frame.");
+      setScanning(false);
+      return;
+    }
     if (backendReady) {
       try {
         const result = await api("/scans", { method: "POST", body: JSON.stringify({ barcode: code, profile_id: Number(profile.id) }) });
@@ -295,7 +381,9 @@ function App() {
         setScanning(false);
         return;
       } catch (error) {
-        setToast(error.message || "Backend scan failed.");
+        setToast(error.message?.includes("Product barcode not found")
+          ? `Barcode ${code} was scanned, but this product is not in the catalog yet.`
+          : error.message || "Backend scan failed.");
         setScanning(false);
         return;
       }
@@ -322,6 +410,26 @@ function App() {
     setActiveProfile(id);
     setShowProfileModal(false);
     setToast(`${name} profile added`);
+  };
+
+  const saveProfile = async (profileId, changes) => {
+    if (!backendReady) throw new Error("The backend is unavailable. Reconnect and try saving again.");
+    if (!/^\d+$/.test(String(profileId))) throw new Error("This profile has not been saved to your account yet.");
+    const saved = await api(`/profiles/${profileId}`, { method: "PATCH", body: JSON.stringify(changes) });
+    const updated = {
+      id: String(saved.id),
+      name: saved.name,
+      icon: saved.icon,
+      photo: saved.preferences?.avatar_photo || profilePhotoFor(saved.id, saved.name),
+      useAvatarSymbol: Boolean(saved.preferences?.use_avatar_symbol),
+      template: saved.profile_type,
+      sodium: saved.sodium_mg,
+      sugar: saved.sugar_g,
+      preferences: saved.preferences || {}
+    };
+    setProfiles(current => current.map(item => item.id === updated.id ? updated : item));
+    setToast("Profile settings saved.");
+    return updated;
   };
 
   const toggleFavorite = async (item) => {
@@ -358,7 +466,7 @@ function App() {
 
         <div className="sidebar-bottom">
           <button className="profile-switch" onClick={() => setPage("profile")}>
-            <span className="avatar">{profile.icon}</span>
+            <span className="avatar"><ProfilePicture profile={profile} size={34} /></span>
             <span><small>{ui("currentProfile", "Current profile")}</small><b>{profile.name}</b></span>
             <span>⌄</span>
           </button>
@@ -439,6 +547,7 @@ function App() {
             activeProfile={activeProfile}
             setActiveProfile={setActiveProfile}
             onAdd={() => setShowProfileModal(true)}
+            onSaveProfile={saveProfile}
             language={language}
           />
         )}
@@ -542,22 +651,43 @@ function FavoritesPage({ favorites, onOpen, onRemove, onScan, language }) {
   );
 }
 
-function ProfileSettingsPage({ profiles, activeProfile, setActiveProfile, onAdd, language }) {
+function ProfileSettingsPage({ profiles, activeProfile, setActiveProfile, onAdd, onSaveProfile, language }) {
   const [dark, setDark] = useState(false);
   const [notifications, setNotifications] = useState(true);
+  const [editingProfile, setEditingProfile] = useState(null);
   const ui = (key, fallback) => t(language, key, fallback);
+
+  if (editingProfile) {
+    return <EditProfilePage
+      key={editingProfile.id}
+      profile={editingProfile}
+      onCancel={() => setEditingProfile(null)}
+      onSave={async changes => {
+        await onSaveProfile(editingProfile.id, changes);
+        setEditingProfile(null);
+      }}
+    />;
+  }
+
+  const openEditor = profile => {
+    setActiveProfile(profile.id);
+    setEditingProfile(profile);
+  };
+  const selectedProfile = profiles.find(p => String(p.id) === String(activeProfile));
+
   return (
     <div className="content">
       <div className="page-title-row">
         <div><p className="eyebrow">ACCOUNT</p><h1>Profile & Settings</h1></div>
+        <button className="primary-btn" disabled={!selectedProfile} onClick={() => selectedProfile && setEditingProfile(selectedProfile)}>Edit Profile</button>
       </div>
 
       <section className="card">
         <div className="card-title"><div><p className="eyebrow">FOOD PROFILE</p><h2>Who are you checking for?</h2></div></div>
         <div className="profile-grid">
           {profiles.map(p => (
-            <button key={p.id} className={`profile-card ${p.id === activeProfile ? "active" : ""}`} onClick={() => setActiveProfile(p.id)}>
-              <span>{p.icon}</span><b>{p.name}</b><small>{p.template}</small>
+            <button key={p.id} className={`profile-card ${p.id === activeProfile ? "active" : ""}`} onClick={() => openEditor(p)}>
+              <span><ProfilePicture profile={p} size={34} /></span><b>{p.name}</b><small>{p.template}</small><small>Edit profile →</small>
             </button>
           ))}
           <button className="profile-card add" onClick={onAdd}><span>＋</span><b>Add profile</b><small>Custom</small></button>
@@ -570,6 +700,180 @@ function ProfileSettingsPage({ profiles, activeProfile, setActiveProfile, onAdd,
         <div className="setting-row"><div><b>Appearance</b><small>Choose your preferred visual mode.</small></div><button className={`toggle ${dark ? "on" : ""}`} onClick={() => setDark(v => !v)}><span /></button></div>
         <div className="setting-row"><div><b>Privacy</b><small>Your saved scans stay in your Sahi Scan account in the backend version.</small></div><span>→</span></div>
       </section>
+    </div>
+  );
+}
+
+const DIETARY_OPTIONS = ["Vegetarian", "Vegan", "Eggetarian", "Non-Vegetarian", "Jain", "Gluten-Free", "Dairy-Free", "Low-Sugar", "Other"];
+const ALLERGEN_OPTIONS = ["Milk", "Peanuts", "Tree Nuts", "Soy", "Wheat", "Gluten", "Egg", "Fish", "Shellfish", "Sesame"];
+
+function PreferenceChips({ options, selected, onToggle }) {
+  return <div className="preference-chip-list">
+    {options.map(option => {
+      const isSelected = selected.includes(option);
+      return <button key={option} type="button" className={`preference-chip ${isSelected ? "selected" : ""}`} aria-pressed={isSelected} onClick={() => onToggle(option)}>{option}</button>;
+    })}
+  </div>;
+}
+
+function CustomPreferenceEditor({ label, placeholder, value, onChange, items, onAdd, onRemove }) {
+  return <div className="custom-preference-editor">
+    <label className="profile-form-field">{label}
+      <span className="custom-preference-entry"><input className="text-input" value={value} onChange={event => onChange(event.target.value)} placeholder={placeholder} /><button type="button" className="secondary-btn" onClick={onAdd} disabled={!value.trim()}>Add</button></span>
+    </label>
+    {items.length > 0 && <div className="preference-chip-list custom-preference-list">{items.map(item => <button type="button" key={item} className="preference-chip selected" onClick={() => onRemove(item)} aria-label={`Remove ${item}`}>{item} ×</button>)}</div>}
+  </div>;
+}
+
+function EditProfilePage({ profile, onCancel, onSave }) {
+  const preferences = profile.preferences || {};
+  const [name, setName] = useState(profile.name || "");
+  const [icon, setIcon] = useState(profile.icon || "👤");
+  const [useAvatarSymbol, setUseAvatarSymbol] = useState(Boolean(profile.useAvatarSymbol || !profile.photo));
+  const [profileType, setProfileType] = useState(profile.template || "Custom");
+  const [sodium, setSodium] = useState(profile.sodium ?? "");
+  const [sugar, setSugar] = useState(profile.sugar ?? "");
+  const [dietary, setDietary] = useState(Array.isArray(preferences.dietary_preferences) ? preferences.dietary_preferences : []);
+  const [customDietary, setCustomDietary] = useState(Array.isArray(preferences.custom_dietary_preferences) ? preferences.custom_dietary_preferences : []);
+  const [customDietaryInput, setCustomDietaryInput] = useState("");
+  const [allergies, setAllergies] = useState(Array.isArray(preferences.allergies) ? preferences.allergies : []);
+  const [customAllergies, setCustomAllergies] = useState(Array.isArray(preferences.custom_allergies) ? preferences.custom_allergies : []);
+  const [customAllergyInput, setCustomAllergyInput] = useState("");
+  const [foodPreferences, setFoodPreferences] = useState(Array.isArray(preferences.food_preferences) ? preferences.food_preferences : []);
+  const [foodPreferenceInput, setFoodPreferenceInput] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  const toggleItem = (setter, current, item) => setter(current.includes(item) ? current.filter(value => value !== item) : [...current, item]);
+  const addItem = (setter, value, setValue) => {
+    const trimmed = value.trim();
+    if (!trimmed) return;
+    setter(current => current.some(item => item.toLowerCase() === trimmed.toLowerCase()) ? current : [...current, trimmed]);
+    setValue("");
+  };
+  const removeItem = (setter, item) => setter(current => current.filter(value => value !== item));
+
+  const handleSave = async event => {
+    event.preventDefault();
+    setError("");
+    if (!name.trim()) {
+      setError("Enter a name for this profile.");
+      return;
+    }
+    const numberOrNull = (value, label) => {
+      if (String(value).trim() === "") return null;
+      const parsed = Number(value);
+      if (!Number.isFinite(parsed) || parsed < 0) throw new Error(`${label} must be zero or greater.`);
+      return parsed;
+    };
+
+    let sodiumValue;
+    let sugarValue;
+    try {
+      sodiumValue = numberOrNull(sodium, "Sodium limit");
+      sugarValue = numberOrNull(sugar, "Sugar limit");
+    } catch (validationError) {
+      setError(validationError.message);
+      return;
+    }
+
+    setSaving(true);
+    try {
+      await onSave({
+        name: name.trim(),
+        profile_type: profileType.trim() || "Custom",
+        icon: icon.trim() || "👤",
+        sodium_mg: sodiumValue,
+        sugar_g: sugarValue,
+        preferences: {
+          ...preferences,
+          ...(profile.photo ? { avatar_photo: profile.photo } : {}),
+          use_avatar_symbol: useAvatarSymbol,
+          dietary_preferences: dietary,
+          custom_dietary_preferences: customDietary,
+          allergies,
+          custom_allergies: customAllergies,
+          food_preferences: foodPreferences
+        }
+      });
+    } catch (saveError) {
+      setError(saveError.message || "Could not save profile settings.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="content">
+      <div className="page-title-row">
+        <div><p className="eyebrow">PROFILE SETTINGS</p><h1>Edit Profile</h1></div>
+        <button type="button" className="secondary-btn" onClick={onCancel}>Back</button>
+      </div>
+      <form className="profile-edit-form" onSubmit={handleSave}>
+        <section className="card profile-edit-card">
+          <div className="card-title"><div><p className="eyebrow">PROFILE</p><h2>Profile details</h2></div><ProfilePicture profile={{ ...profile, icon, useAvatarSymbol }} size={48} /></div>
+          <div className="profile-fields-grid">
+            <label className="profile-form-field">Name<input className="text-input" value={name} onChange={event => setName(event.target.value)} maxLength={80} required /></label>
+            <label className="profile-form-field">Profile type<input className="text-input" value={profileType} onChange={event => setProfileType(event.target.value)} maxLength={40} /></label>
+            <label className="profile-form-field">Avatar symbol<input className="text-input" value={icon} onChange={event => { setIcon(event.target.value); setUseAvatarSymbol(true); }} maxLength={16} /></label>
+            {profile.photo && <div className="profile-form-field"><span>Profile photo</span><button type="button" className="secondary-btn" onClick={() => setUseAvatarSymbol(false)}>Use profile photo</button></div>}
+            <label className="profile-form-field">Sodium preference (mg / 100 g)<input className="text-input" type="number" min="0" step="any" value={sodium} onChange={event => setSodium(event.target.value)} /></label>
+            <label className="profile-form-field">Sugar preference (g / 100 g)<input className="text-input" type="number" min="0" step="any" value={sugar} onChange={event => setSugar(event.target.value)} /></label>
+          </div>
+        </section>
+
+        <section className="card profile-edit-card">
+          <div className="card-title"><div><p className="eyebrow">FOOD CHOICES</p><h2>Dietary Preferences</h2></div></div>
+          <p className="profile-section-help">Select all that apply to this profile.</p>
+          <PreferenceChips options={DIETARY_OPTIONS} selected={dietary} onToggle={item => toggleItem(setDietary, dietary, item)} />
+          {dietary.includes("Other") && <CustomPreferenceEditor
+            label="Other dietary preferences"
+            placeholder="Add a dietary preference"
+            value={customDietaryInput}
+            onChange={setCustomDietaryInput}
+            items={customDietary}
+            onAdd={() => addItem(setCustomDietary, customDietaryInput, setCustomDietaryInput)}
+            onRemove={item => removeItem(setCustomDietary, item)}
+          />}
+        </section>
+
+        <section className="card profile-edit-card">
+          <div className="card-title"><div><p className="eyebrow">PERSONAL FOOD NEEDS</p><h2>Allergens & Food Preferences</h2></div></div>
+          <div className="profile-preference-subsection">
+            <h3>Allergies</h3>
+            <p className="profile-section-help">Select ingredients this profile must avoid because of an allergy.</p>
+            <PreferenceChips options={ALLERGEN_OPTIONS} selected={allergies} onToggle={item => toggleItem(setAllergies, allergies, item)} />
+            <CustomPreferenceEditor
+              label="Other / Custom allergen"
+              placeholder="Add an allergen"
+              value={customAllergyInput}
+              onChange={setCustomAllergyInput}
+              items={customAllergies}
+              onAdd={() => addItem(setCustomAllergies, customAllergyInput, setCustomAllergyInput)}
+              onRemove={item => removeItem(setCustomAllergies, item)}
+            />
+          </div>
+          <div className="profile-preference-subsection">
+            <h3>General food preferences</h3>
+            <p className="profile-section-help">Add non-allergy food choices or restrictions for this profile.</p>
+            <CustomPreferenceEditor
+              label="Other / Custom food preference"
+              placeholder="Add a food preference"
+              value={foodPreferenceInput}
+              onChange={setFoodPreferenceInput}
+              items={foodPreferences}
+              onAdd={() => addItem(setFoodPreferences, foodPreferenceInput, setFoodPreferenceInput)}
+              onRemove={item => removeItem(setFoodPreferences, item)}
+            />
+          </div>
+        </section>
+
+        {error && <p className="profile-save-error" role="alert">{error}</p>}
+        <div className="profile-edit-actions">
+          <button type="button" className="secondary-btn" onClick={onCancel} disabled={saving}>Cancel</button>
+          <button type="submit" className="primary-btn" disabled={saving}>{saving ? "Saving…" : "Save changes"}</button>
+        </div>
+      </form>
     </div>
   );
 }
@@ -602,7 +906,7 @@ function Home({ profile, onScan, onDart, onReports, onProfiles, language }) {
       <section className="section-head">
         <div>
           <p className="eyebrow">{ui("currentProfile", "CURRENT PROFILE")}</p>
-          <h2>{profile.icon} {profile.name}</h2>
+          <h2><ProfilePicture profile={profile} size={26} /> {profile.name}</h2>
         </div>
         <button className="link-btn" onClick={onProfiles}>{ui("manageProfiles", "Manage profiles →")}</button>
       </section>
@@ -668,23 +972,23 @@ function ScanPage({
       <div className="content scan-empty scan-page-redesign">
         <section className="scan-welcome">
           <div className="scan-welcome-copy">
-            <p className="eyebrow">SAHI SCAN · FOOD CHECK</p>
-            <h1>{ui("scanProduct", "Scan your food")}</h1>
-            <p className="scan-subtitle">Scan a packaged food label or barcode to understand its ingredients, nutrition and profile match.</p>
+            <p className="eyebrow">PRODUCT CHECK</p>
+            <h1>{ui("scanProduct", "Scan a product")}</h1>
+            <p className="scan-subtitle">Scan a barcode or add a clear label photo to see ingredients, nutrition, and how it matches your profile.</p>
             <div className="scan-profile-chip">
-              <span className="scan-profile-avatar">{profile.icon}</span>
+              <span className="scan-profile-avatar"><ProfilePicture profile={profile} size={34} /></span>
               <span><small>Checking for</small><b>{profile.name}</b></span>
             </div>
           </div>
           <div className="scan-stat-card">
             <span className="scan-stat-icon">✦</span>
-            <div><b>Tesseract4Android OCR</b><small>Extract real text directly from food package photos using Tesseract 4.</small></div>
+            <div><b>Simple food intelligence</b><small>Read the label. Understand the food. Decide with context.</small></div>
           </div>
         </section>
 
         <section className="scanner-stage card">
           <div className="scanner-stage-head">
-            <div><p className="eyebrow">PRODUCT SCANNER</p><h2>Place the barcode inside the frame</h2></div>
+            <div><p className="eyebrow">BARCODE SCAN</p><h2>Place the barcode inside the frame</h2></div>
             <span className={`scanner-live state-badge ${ocrState?.toLowerCase() || 'ready'}`}>● {ocrState || 'READY'}</span>
           </div>
 
@@ -699,7 +1003,7 @@ function ScanPage({
             <div className="scanner-corner bottom-left"></div><div className="scanner-corner bottom-right"></div>
             <div className="scanner-center-icon">📷</div>
             <div className="scanner-line"></div>
-            <span className="scanner-hint">Barcode or supported 2D code</span>
+            <span className="scanner-hint">Barcode or 2D code</span>
           </div>
 
           <div className="scanner-actions">
@@ -707,7 +1011,7 @@ function ScanPage({
               {scanning ? "Analyzing…" : (language === "HI" ? "स्कैन शुरू करें" : language === "KN" ? "ಸ್ಕ್ಯಾನ್ ಪ್ರಾರಂಭಿಸಿ" : language === "TE" ? "స్కాన్ ప్రారంభించండి" : language === "TA" ? "ஸ்கேனைத் தொடங்கு" : "Start scan")}
             </button>
             <button className="secondary-btn large scan-upload-btn" onClick={onTakePhoto}>
-              {ocrState === "PROCESSING_IMAGE" || ocrState === "RUNNING_OCR" ? "Running OCR…" : "▣ Take / upload label photo"}
+              {ocrState === "PROCESSING_IMAGE" || ocrState === "RUNNING_OCR" ? "Reading label…" : "▣ Take or choose label photo"}
             </button>
             <input id="sahi-camera-file-input" type="file" accept="image/jpeg,image/png,image/webp" capture="environment" hidden onChange={e => { if (e.target.files?.[0]) onScanImage(e.target.files[0]); e.target.value = ""; }} />
           </div>
@@ -715,7 +1019,7 @@ function ScanPage({
           {ocrState && ocrState !== "READY" && (
             <div className="ocr-real-result-card">
               <div className="ocr-result-header">
-                <h3>Tesseract OCR Result</h3>
+                <h3>Label text</h3>
                 <span className={`state-pill ${ocrState.toLowerCase()}`}>{ocrState}</span>
               </div>
               <p className="ocr-message-line">{ocrMessage}</p>
@@ -728,32 +1032,32 @@ function ScanPage({
 
               {ocrState === "NO_TEXT_DETECTED" && (
                 <div className="ocr-empty-notice">
-                  <p>No text detected.</p>
+                  <p>We couldn’t read text in this photo. Try a clearer image.</p>
                 </div>
               )}
 
               {ocrState === "OCR_ERROR" && (
                 <div className="ocr-error-notice">
-                  <p>{ocrMessage || "An error occurred during Tesseract OCR."}</p>
+                  <p>{ocrMessage || "We couldn’t read this label. Please try another photo."}</p>
                 </div>
               )}
 
               <div className="ocr-result-actions">
-                <button className="secondary-btn" onClick={onResetOcr}>↻ Scan Again</button>
+                <button className="secondary-btn" onClick={onResetOcr}>↻ Try another photo</button>
               </div>
             </div>
           )}
         </section>
 
         <section className="scan-info-grid">
-          <div className="card scan-info-card"><span className="scan-info-number">01</span><div><b>Select food photo</b><p>Pick a real photo from Android Gallery or capture with camera.</p></div></div>
-          <div className="card scan-info-card"><span className="scan-info-number">02</span><div><b>Tesseract processes image</b><p>cz.adaptech.tesseract4android with eng.traineddata extracts text.</p></div></div>
-          <div className="card scan-info-card"><span className="scan-info-number">03</span><div><b>See real OCR text</b><p>The extracted text is displayed directly from the bitmap without fake data.</p></div></div>
+          <div className="card scan-info-card"><span className="scan-info-number">01</span><div><b>Transparent reasoning</b><p>See which nutrition values are used and why your selected profile may disagree.</p></div></div>
+          <div className="card scan-info-card"><span className="scan-info-number">02</span><div><b>Ingredient explorer</b><p>Explore declared ingredients with plain-language notes and category details.</p></div></div>
+          <div className="card scan-info-card"><span className="scan-info-number">03</span><div><b>Better-match alternatives</b><p>Compare the demo catalog against the active profile before choosing.</p></div></div>
         </section>
 
         <section className="card scan-tip-card">
           <div className="scan-tip-icon">✓</div>
-          <div><p className="eyebrow">BETTER OCR SCANS</p><h3>For clearer text extraction</h3><p>Use well-lit package photos, avoid heavy shadows, and ensure ingredient/nutrition text is sharp.</p></div>
+          <div><p className="eyebrow">CLEARER LABEL PHOTOS</p><h3>For easier reading</h3><p>Use a well-lit photo, avoid heavy shadows, and keep the ingredient and nutrition text in focus.</p></div>
         </section>
       </div>
     );
@@ -964,7 +1268,7 @@ function ProfilesPage({ profiles, activeProfile, setActiveProfile, onAdd, langua
       <div className="profiles-grid">
         {profiles.map(p => (
           <button className={`profile-card ${p.id === activeProfile ? "selected" : ""}`} key={p.id} onClick={() => setActiveProfile(p.id)}>
-            <span className="profile-avatar">{p.icon}</span>
+            <span className="profile-avatar"><ProfilePicture profile={p} size={54} /></span>
             <div><b>{p.name}</b><small>{p.template}</small><small>Sodium · {p.sodium} mg/100 g</small><small>Sugar · {p.sugar} g/100 g</small></div>
             {p.id === activeProfile && <span className="selected-check">✓</span>}
           </button>
@@ -1066,7 +1370,7 @@ function SahiSaathPage({ language, setLanguage, product, profile }) {
       <section className="chat-shell card">
         <div className="chat-header"><span className="chat-avatar">✦</span><div><b>SAHI-SAATH</b><small>{copy.subtitle}</small></div><span className="chat-status">{ui("online", "● Online")}</span></div>
         <div className="chat-messages" aria-live="polite">
-          {messages.map((message, index) => <div className={`chat-message ${message.role}`} key={`${message.role}-${index}`}><span>{message.role === "assistant" ? "✦" : profile.icon}</span><p>{message.text}</p></div>)}
+          {messages.map((message, index) => <div className={`chat-message ${message.role}`} key={`${message.role}-${index}`}><span>{message.role === "assistant" ? "✦" : <ProfilePicture profile={profile} size={28} />}</span><p>{message.text}</p></div>)}
         </div>
         <form className="chat-form" onSubmit={sendQuestion}>
           <input value={question} onChange={event => setQuestion(event.target.value)} placeholder={copy.placeholder} aria-label={copy.placeholder} />

@@ -377,6 +377,7 @@ body { background: var(--app-bg); color: var(--app-ink); }
   .report-grid { grid-template-columns: repeat(2, 1fr); }
 }
 @media (max-width: 800px) {
+  .toast { left: 50%; right: auto; bottom: 90px; transform: translateX(-50%); width: min(460px, calc(100% - 32px)); }
   .sidebar { display: none; }
   .main { margin-left: 0; width: 100%; }
   .topbar { justify-content: space-between; padding: 0 18px; }
@@ -484,9 +485,29 @@ body { background: var(--app-bg); color: var(--app-ink); }
 .toggle span{display:block;width:20px;height:20px;border-radius:50%;background:#fff;transition:transform .18s}
 .toggle.on{background:#58725a}
 .toggle.on span{transform:translateX(20px)}
+.profile-edit-form{display:grid;gap:16px}
+.profile-edit-card{padding:20px}
+.profile-edit-card .card-title{align-items:center}
+.profile-fields-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+.profile-form-field{display:grid;gap:7px;color:var(--app-ink);font-size:13px;font-weight:700}
+.profile-form-field .text-input{box-sizing:border-box;margin:0;color:var(--app-ink);font-weight:400}
+.profile-section-help{margin:0 0 12px;color:var(--muted);font-size:12px;line-height:1.5}
+.preference-chip-list{display:flex;flex-wrap:wrap;gap:8px}
+.preference-chip{border:1px solid var(--line);border-radius:999px;background:#fff;color:var(--app-ink);padding:8px 12px;font-size:12px;cursor:pointer}
+.preference-chip.selected{border-color:var(--green);background:var(--green-soft);color:var(--green-dark);font-weight:700}
+.preference-chip:focus-visible{outline:2px solid var(--green);outline-offset:2px}
+.profile-preference-subsection{display:grid;gap:10px;margin-top:18px;padding-top:18px;border-top:1px solid var(--line)}
+.profile-preference-subsection h3{margin:0;font-size:16px}
+.custom-preference-editor{display:grid;gap:10px;margin-top:14px}
+.custom-preference-entry{display:flex;gap:8px}
+.custom-preference-entry .text-input{flex:1;min-width:0}
+.custom-preference-list .preference-chip{font-size:11px}
+.profile-save-error{margin:0;padding:12px 14px;border-radius:10px;background:var(--red-soft);color:var(--red);font-size:13px}
+.profile-edit-actions{display:flex;justify-content:flex-end;gap:10px}
 @media(max-width:760px){
   .food-grid{grid-template-columns:1fr}
   .setting-row{align-items:flex-start}
+  .profile-fields-grid{grid-template-columns:1fr}
 }
 
 /* Sahi Scan — redesigned empty scan page only */
@@ -538,4 +559,3 @@ body { background: var(--app-bg); color: var(--app-ink); }
 .ocr-empty-notice { background: #fff5f5; color: #c53030; border: 1px solid #feb2b2; }
 .ocr-error-notice { background: #fff5f5; color: #9b2c2c; border: 1px solid #feb2b2; }
 .ocr-result-actions { display: flex; gap: 10px; margin-top: 14px; }
-
