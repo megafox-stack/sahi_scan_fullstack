@@ -96,6 +96,8 @@ h3 { margin: 0; font-size: 16px; }
 .packet-reminder { background: var(--yellow-soft); border: 1px solid #f0dfad; padding: 12px 15px; border-radius: 11px; color: #765711; margin-bottom: 15px; font-size: 13px; }
 .product-header { display: flex; gap: 20px; align-items: center; padding: 23px; margin-bottom: 15px; }
 .product-emoji { width: 86px; height: 86px; display: grid; place-items: center; background: #f3f6f4; border-radius: 18px; font-size: 44px; }
+.product-emoji.product-image-frame { overflow: hidden; }
+.product-emoji.product-image-frame img { width: 100%; height: 100%; object-fit: cover; }
 .product-main { flex: 1; }
 .product-main h2 { margin: 6px 0; font-size: 28px; }
 .product-main p { color: var(--muted); margin: 0 0 9px; }
@@ -461,7 +463,9 @@ body { background: var(--app-bg); color: var(--app-ink); }
 .food-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:16px;margin-top:18px}
 .food-card{display:block;width:100%;text-align:left;border:1px solid var(--line,#ddd);background:var(--surface,#fff);border-radius:20px;overflow:hidden;cursor:pointer;padding:0;color:inherit}
 .food-card-open{display:block;width:100%;text-align:left;border:0;background:transparent;color:inherit;padding:0;cursor:pointer}
-.food-card-image{height:150px;display:grid;place-items:center;background:#f2f3ed;font-size:64px}
+.food-card-image{height:150px;display:grid;place-items:center;background:#f2f3ed;font-size:64px;overflow:hidden}
+.food-card-image img{width:100%;height:100%;object-fit:cover}
+.scan-captured-image{display:block;width:min(100%,520px);max-height:420px;object-fit:contain;border-radius:14px;margin:14px auto}
 .food-card-body{padding:16px}
 .food-card-body h3{margin:8px 0 4px}
 .food-card-body p{margin:0 0 14px;opacity:.68}

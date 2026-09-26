@@ -1,7 +1,10 @@
 from pathlib import Path
 from uuid import uuid4
 from datetime import datetime
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from io import BytesIO
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from PIL import Image, UnidentifiedImageError
+from sqlalchemy import func
 from sqlalchemy.orm import Session, joinedload
 from app.api.deps import current_user
 from app.core.security import create_access_token, hash_password, verify_password
@@ -10,7 +13,7 @@ from app.models import User, Profile, Product, Scan, Favorite, Nutrition, Ingred
 from app.schemas.schemas import AuthRegister, AuthLogin, Token, ProfileCreate, ProfileOut, ScanRequest, ChatRequest, QualityReportCreate, QualityReportOut
 from app.services.scoring import evaluate
 from app.services.serializers import product_to_dict, scan_to_dict
-from app.services.ocr import analyze_image
+from app.services.ocr import analyze_image, _extract_fields
 
 router = APIRouter()
 UPLOAD_DIR = Path(__file__).resolve().parents[2] / "uploads"
@@ -60,38 +63,76 @@ def _profile(data_profile_id, user, db):
     if not p: raise HTTPException(400, "Create a profile before scanning")
     return p
 
-def _save_scan(db, user, profile, product, analysis, image_path=None):
-    result = evaluate(product, profile)
+def _save_scan(db, user, profile, product, analysis, image_path=None, ocr_text=None, barcode=None):
+    result = evaluate(product, profile) if product else {
+        "score": None,
+        "status": "UNCLEAR",
+        "verdict": "UNCLEAR",
+        "reason": "Product details were not identified from this scan.",
+        "reasons": ["Product details were not identified from this scan."],
+        "evidence_status": "UNCLEAR",
+    }
     merged = {**analysis, **result}
-    s = Scan(user_id=user.id, profile_id=profile.id, product_id=product.id if product else None, image_path=image_path, sahi_score=result["score"], status=result["status"], verdict=result["verdict"], analysis=merged)
+    s = Scan(user_id=user.id, profile_id=profile.id, product_id=product.id if product else None, captured_image_path=image_path, image_path=image_path, ocr_text=ocr_text, barcode=barcode, sahi_score=result["score"], status=result["status"], verdict=result["verdict"], analysis=merged)
     db.add(s); db.commit(); db.refresh(s); return s
 
 @router.post("/scans", response_model=dict)
 def scan(data: ScanRequest, user=Depends(current_user), db: Session = Depends(get_db)):
     product = db.query(Product).options(joinedload(Product.nutrition), joinedload(Product.ingredients)).filter_by(barcode=data.barcode).first()
     if not product: raise HTTPException(404, "Product barcode not found")
-    return scan_to_dict(_save_scan(db, user, _profile(data.profile_id, user, db), product, {"source": "barcode"}))
+    return scan_to_dict(_save_scan(db, user, _profile(data.profile_id, user, db), product, {"source": "barcode", "barcode": data.barcode}, barcode=data.barcode))
 
 @router.post("/scans/image", response_model=dict)
-async def scan_image(file: UploadFile = File(...), profile_id: int | None = None, user=Depends(current_user), db: Session = Depends(get_db)):
-    allowed = {"image/jpeg", "image/png", "image/webp"}
-    if file.content_type not in allowed: raise HTTPException(415, "Use JPG, PNG or WebP")
+async def scan_image(file: UploadFile = File(...), profile_id: int | None = Form(None), barcode: str | None = Form(None), ocr_text: str | None = Form(None), user=Depends(current_user), db: Session = Depends(get_db)):
+    content_types = {"JPEG": ("image/jpeg", ".jpg"), "PNG": ("image/png", ".png"), "WEBP": ("image/webp", ".webp")}
     data = await file.read()
     if len(data) > 10 * 1024 * 1024: raise HTTPException(413, "Image must be under 10 MB")
-    suffix = {"image/jpeg":".jpg", "image/png":".png", "image/webp":".webp"}[file.content_type]
-    target = UPLOAD_DIR / f"{uuid4().hex}{suffix}"; target.write_bytes(data)
-    ocr = analyze_image(target)
+    if not data: raise HTTPException(415, "The uploaded file is empty")
+    try:
+        image = Image.open(BytesIO(data))
+        image_format = image.format
+        image.verify()
+    except (UnidentifiedImageError, OSError, ValueError):
+        raise HTTPException(415, "The uploaded file is not a valid JPG, PNG or WebP image")
+    if image_format not in content_types:
+        raise HTTPException(415, "Use a valid JPG, PNG or WebP image")
+    expected_type, suffix = content_types[image_format]
+    if file.content_type and file.content_type not in {expected_type, "application/octet-stream"}:
+        raise HTTPException(415, "The uploaded image format does not match its content type")
+    if barcode and len(barcode.strip()) > 32:
+        raise HTTPException(422, "Barcode must be 32 characters or fewer")
+
     profile = _profile(profile_id, user, db)
-    barcode = (ocr.get("fields", {}).get("barcodes") or [None])[0]
-    product = db.query(Product).options(joinedload(Product.nutrition), joinedload(Product.ingredients)).filter_by(barcode=barcode).first() if barcode else None
+    scan_dir = UPLOAD_DIR / "scans"
+    scan_dir.mkdir(parents=True, exist_ok=True)
+    filename = f"{uuid4().hex}{suffix}"
+    target = scan_dir / filename
+    target.write_bytes(data)
+
+    image_ocr = analyze_image(target)
+    extracted_text = (ocr_text or "").strip() or image_ocr.get("text", "")
+    fields = _extract_fields(extracted_text, image_ocr.get("codes", []))
+    detected_barcode = (barcode or "").strip() or (fields.get("barcodes") or [None])[0]
+    if detected_barcode and detected_barcode not in fields.get("barcodes", []):
+        fields.setdefault("barcodes", []).insert(0, detected_barcode)
+    ocr = {**image_ocr, "text": extracted_text, "fields": fields, "source": "android_tesseract" if ocr_text and ocr_text.strip() else "backend_tesseract"}
+    if ocr_text and ocr_text.strip():
+        ocr["ocr_error"] = None
+
+    product_query = db.query(Product).options(joinedload(Product.nutrition), joinedload(Product.ingredients), joinedload(Product.allergens))
+    product = product_query.filter_by(barcode=detected_barcode).first() if detected_barcode else None
+    if not product and not detected_barcode and fields.get("name"):
+        product = product_query.filter(
+            Product.barcode.is_(None),
+            Product.source == "OCR label",
+            func.lower(Product.name) == fields["name"].strip().lower(),
+        ).first()
     created_from_ocr = False
-    if not product:
-        fields = ocr.get("fields", {})
-        # Create a local evidence record so the scan is still inspectable when the barcode
-        # is unknown. Synthetic IDs never masquerade as real product barcodes.
-        synthetic = f"OCR-{uuid4().hex[:20]}"
-        name = fields.get("name") or "Unidentified food label"
-        product = Product(barcode=synthetic, code_type="OCR", name=name, brand="Unknown", category="Unclassified", manufacturer="Unknown", fssai="Not verified", fssai_license=fields.get("fssai_license"), fssai_status="OCR_ONLY" if fields.get("fssai_license") else "NOT_LOADED", evidence_status="PARTIAL" if ocr.get("status") != "UNCLEAR" else "UNCLEAR", source="OCR label", source_url=None, image="🍽️")
+    if not product and fields.get("name"):
+        # OCR can identify a real label even when no barcode was captured.
+        # Store only extracted facts; a nullable barcode allows that Product
+        # to be linked to this Scan without manufacturing an identifier.
+        product = Product(barcode=detected_barcode, code_type="OCR", name=fields["name"], brand="", category="", manufacturer="", fssai="Not verified", fssai_license=fields.get("fssai_license"), fssai_status="OCR_ONLY" if fields.get("fssai_license") else "NOT_LOADED", evidence_status="PARTIAL", source="OCR label", source_url=None, image="", image_url=None)
         db.add(product); db.flush()
         n = fields.get("nutrition", {})
         if any(v is not None for v in n.values()):
@@ -104,17 +145,17 @@ async def scan_image(file: UploadFile = File(...), profile_id: int | None = None
             if m: additive = "INS " + m.group(1)
             db.add(Ingredient(product_id=product.id, name=raw, normalized_name=normalized, additive_code=additive, type="blue" if additive else "green", note="Extracted from uploaded label by OCR."))
         db.commit(); db.refresh(product); created_from_ocr = True
-    analysis = {"source": "image_ocr", "ocr": ocr, "barcode": barcode, "product_match": not created_from_ocr}
-    result = _save_scan(db, user, profile, product, analysis, str(target))
-    return scan_to_dict(result) | {"workflow": {"image_stored": True, "ocr_completed": ocr.get("ocr_error") is None, "barcode_detected": bool(barcode), "product_matched": not created_from_ocr, "next_step": "Review extracted fields before relying on an OCR-only result."}}
+    analysis = {"source": "image_ocr", "ocr": ocr, "barcode": detected_barcode, "product_match": bool(product and not created_from_ocr)}
+    result = _save_scan(db, user, profile, product, analysis, f"scans/{filename}", extracted_text or None, detected_barcode)
+    return scan_to_dict(result) | {"workflow": {"image_stored": True, "ocr_completed": bool(extracted_text), "barcode_detected": bool(detected_barcode), "product_matched": bool(product and not created_from_ocr), "product_created_from_ocr": created_from_ocr, "next_step": "Review extracted fields before relying on OCR-only evidence."}}
 
 @router.get("/scans", response_model=list[dict])
 def recent_scans(limit: int = 20, user=Depends(current_user), db: Session = Depends(get_db)):
-    rows = db.query(Scan).options(joinedload(Scan.product).joinedload(Product.nutrition), joinedload(Scan.product).joinedload(Product.ingredients)).filter_by(user_id=user.id).order_by(Scan.created_at.desc()).limit(min(limit,100)).all(); return [scan_to_dict(s) for s in rows]
+    rows = db.query(Scan).options(joinedload(Scan.product).joinedload(Product.nutrition), joinedload(Scan.product).joinedload(Product.ingredients), joinedload(Scan.product).joinedload(Product.allergens)).filter_by(user_id=user.id).order_by(Scan.created_at.desc()).limit(min(limit,100)).all(); return [scan_to_dict(s) for s in rows]
 
 @router.get("/scans/{scan_id}", response_model=dict)
 def get_scan(scan_id: int, user=Depends(current_user), db: Session = Depends(get_db)):
-    s = db.query(Scan).options(joinedload(Scan.product).joinedload(Product.nutrition), joinedload(Scan.product).joinedload(Product.ingredients)).filter_by(id=scan_id,user_id=user.id).first()
+    s = db.query(Scan).options(joinedload(Scan.product).joinedload(Product.nutrition), joinedload(Scan.product).joinedload(Product.ingredients), joinedload(Scan.product).joinedload(Product.allergens)).filter_by(id=scan_id,user_id=user.id).first()
     if not s: raise HTTPException(404,"Scan not found")
     return scan_to_dict(s)
 

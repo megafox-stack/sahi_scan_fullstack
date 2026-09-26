@@ -1,10 +1,11 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from app.core.config import settings
 from app.db.session import Base, engine
 from app.models import models
 from app.db.migrate import ensure_schema
-from app.api.routes import router
+from app.api.routes import router, UPLOAD_DIR
 from app.seed import seed_database
 
 ensure_schema()
@@ -16,6 +17,7 @@ origins = [x.strip() for x in settings.cors_origins.split(",") if x.strip()]
 allow_creds = False if "*" in origins else True
 app.add_middleware(CORSMiddleware, allow_origins=origins, allow_origin_regex=r"https?://192\.168\.0\.\d+(?::\d+)?", allow_credentials=allow_creds, allow_methods=["*"], allow_headers=["*"])
 app.include_router(router, prefix="/api/v1")
+app.mount("/uploads", StaticFiles(directory=str(UPLOAD_DIR)), name="uploads")
 
 @app.get("/health")
 def health():

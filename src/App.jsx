@@ -1,15 +1,66 @@
 import React, { useEffect, useMemo, useState } from "react";
+import { registerPlugin } from "@capacitor/core";
 import { Camera, CameraResultType, CameraSource } from "@capacitor/camera";
-import {
-  CapacitorBarcodeScanner,
-  CapacitorBarcodeScannerAndroidScanningLibrary,
-  CapacitorBarcodeScannerCameraDirection,
-  CapacitorBarcodeScannerScanOrientation,
-  CapacitorBarcodeScannerTypeHint
-} from "@capacitor/barcode-scanner";
+
+const OcrPlugin = registerPlugin("OcrPlugin");
 
 //const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://localhost:8000/api/v1";
 const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://192.168.0.141:8000/api/v1";
+const API_ORIGIN = API_BASE.replace(/\/api\/v1\/?$/, "");
+
+function uploadedImageUrl(path) {
+  if (!path) return null;
+  if (/^https?:\/\//i.test(path)) return path;
+  return `${API_ORIGIN}/${String(path).replace(/^\/+/, "")}`;
+}
+
+function mapScanRecord(record) {
+  const source = record?.product || {};
+  const nutrition = source.nutrition || {};
+  const analysis = record?.analysis || {};
+  const capturePath = record?.captured_image_path || record?.image_path || null;
+  const barcode = record?.barcode || source.barcode || analysis.barcode || null;
+  const ocrText = record?.ocr_text || analysis.ocr?.text || null;
+  return {
+    ...source,
+    id: source.id ?? null,
+    name: source.name || "Unidentified scan",
+    brand: source.brand || "",
+    category: source.category || "",
+    manufacturer: source.manufacturer || "",
+    fssai: source.fssai || "",
+    image: source.image || "",
+    image_url: source.image_url || null,
+    nutrition: {
+      sodium: nutrition.sodium ?? null, sugar: nutrition.sugar ?? null,
+      carbs: nutrition.carbs ?? null, fat: nutrition.fat ?? null,
+      satFat: nutrition.sat_fat ?? nutrition.satFat ?? null,
+      transFat: nutrition.trans_fat ?? nutrition.transFat ?? null,
+      addedSugar: nutrition.added_sugar ?? nutrition.addedSugar ?? null,
+      energy: nutrition.energy ?? null, protein: nutrition.protein ?? null,
+      fiber: nutrition.fiber ?? null, servingSize: nutrition.serving_size ?? null,
+      servingUnit: nutrition.serving_unit ?? null
+    },
+    ingredients: source.ingredients || [], allergens: source.allergens || [],
+    alternatives: source.alternatives || [], reports: source.reports || { total: 0, spoilage: 0, foreignObject: 0 },
+    resultType: record?.verdict || "UNCLEAR", scanId: record?.id ?? null,
+    sahiScore: record?.sahi_score ?? null, backendReason: record?.reason || "",
+    barcode,
+    ocr: analysis.ocr || (ocrText ? { text: ocrText, fields: {} } : null),
+    workflow: record?.workflow || null,
+    scanRecord: {
+      capturedImagePath: capturePath,
+      capturedImageUrl: uploadedImageUrl(record?.captured_image_url || capturePath),
+      ocrText, barcode, createdAt: record?.created_at || null
+    }
+  };
+}
+
+function scanDate(value) {
+  if (!value) return "";
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? "" : date.toLocaleString();
+}
 
 
 
@@ -109,6 +160,36 @@ function profilePhotoFor(id, name) {
 function ProfilePicture({ profile, size }) {
   if (!profile.photo || profile.useAvatarSymbol) return profile.icon;
   return <img src={profile.photo} alt={`${profile.name} profile`} style={{ width: size, height: size, objectFit: "cover", borderRadius: "50%", display: "inline-block", verticalAlign: "middle" }} />;
+}
+
+function CapturedScanImage({ src, alt, className = "" }) {
+  const [localUrl, setLocalUrl] = useState(null);
+  useEffect(() => {
+    let cancelled = false;
+    let objectUrl = null;
+    setLocalUrl(null);
+    if (src) {
+      fetch(src)
+        .then(response => {
+          if (!response.ok) throw new Error(`Image request failed (${response.status})`);
+          return response.blob();
+        })
+        .then(blob => {
+          objectUrl = URL.createObjectURL(blob);
+          if (cancelled) URL.revokeObjectURL(objectUrl);
+          else setLocalUrl(objectUrl);
+        })
+        .catch(error => console.warn("Could not load captured scan image.", error));
+    }
+    return () => {
+      cancelled = true;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [src]);
+
+  return localUrl
+    ? <img src={localUrl} alt={alt} className={className} />
+    : <span className={`captured-image-placeholder ${className}`} aria-label={alt}>📷</span>;
 }
 
 const INITIAL_PROFILES = [
@@ -221,8 +302,8 @@ function App() {
           const amma = serverProfiles.find(p => p.name.toLowerCase() === "amma") || serverProfiles[0];
           setActiveProfile(String(amma.id));
         }
-        if (serverScans.length) setScanHistory(serverScans.map(x => ({ ...x.product, scanId: x.id, resultType: x.verdict, sahiScore: x.sahi_score, backendReason: x.reason })));
-        if (serverFavorites.length) setFavorites(serverFavorites.map(x => ({ ...x.product, scanId: x.id, resultType: x.verdict, sahiScore: x.sahi_score, backendReason: x.reason })));
+        setScanHistory(serverScans.map(mapScanRecord));
+        setFavorites(serverFavorites.map(mapScanRecord));
         setBackendReady(true);
       } catch (error) {
         console.warn("Sahi Scan backend unavailable.", error);
@@ -244,38 +325,41 @@ function App() {
     return { verdict: "AGREED", reason: `The declared nutrition values match ${prof.name}'s configured preferences.` };
   };
 
-  const scanImage = async (file) => {
+  const scanImage = async (file, scanMetadata = {}) => {
     if (!file) return;
     setPage("scan");
+    setImageProcessing(true);
     const previewUrl = URL.createObjectURL(file);
     setOcrPreviewUrl(previewUrl);
     setOcrState("PROCESSING_IMAGE");
     setOcrMessage("Preparing your label photo…");
     setOcrResult("");
 
-    const reader = new FileReader();
-    reader.onload = async () => {
-      const base64Data = reader.result;
+    try {
+      const base64Data = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result);
+        reader.onerror = () => reject(new Error("Could not open this photo. Please choose another image."));
+        reader.readAsDataURL(file);
+      });
       setOcrState("RUNNING_OCR");
       setOcrMessage("Reading the text on your label…");
 
-      const ocrPlugin = window.Capacitor?.Plugins?.OcrPlugin;
-      if (ocrPlugin && typeof ocrPlugin.processImageUri === "function") {
+      let extractedText = "";
+      if (window.Capacitor?.isNativePlatform?.()) {
         try {
-          const response = await ocrPlugin.processImageUri({ base64: base64Data });
+          const response = await OcrPlugin.processImageUri({ base64: base64Data });
           if (response && response.state) {
             setOcrState(response.state);
             setOcrMessage(response.message || "");
             if (response.state === "OCR_COMPLETE") {
-              setOcrResult(response.text);
-              setToast("Label text extracted.");
+              extractedText = response.text || "";
+              setOcrResult(extractedText);
             } else if (response.state === "NO_TEXT_DETECTED") {
               setOcrResult("");
               setOcrMessage("We couldn’t read text in this photo. Try a clearer image.");
-              setToast("No readable text found in this photo.");
             } else {
               setOcrResult("");
-              setToast(response.message || "The label could not be read.");
             }
           } else {
             setOcrState("OCR_ERROR");
@@ -288,15 +372,25 @@ function App() {
       } else {
         setOcrState("NO_TEXT_DETECTED");
         setOcrMessage("Open the Android app to read text from a label photo.");
-        setOcrResult("");
-        setToast("Label reading is available in the Android app.");
-      }
-    };
-    reader.onerror = () => {
+          setOcrResult("");
+        }
+      const form = new FormData();
+      form.append("file", file, file.name || "food-label.jpg");
+      if (/^\d+$/.test(String(profile.id))) form.append("profile_id", String(profile.id));
+      if (scanMetadata.barcode) form.append("barcode", scanMetadata.barcode);
+      if (extractedText) form.append("ocr_text", extractedText);
+      const saved = await api("/scans/image", { method: "POST", body: form });
+      const mapped = mapScanRecord(saved);
+      setProduct(mapped);
+      setScanHistory(previous => [mapped, ...previous.filter(item => item.scanId !== mapped.scanId)].slice(0, 100));
+      setToast(saved.product ? "Scan saved to Recent Scans." : "Image saved to Recent Scans. Product details were not identified.");
+    } catch (err) {
       setOcrState("OCR_ERROR");
-      setOcrMessage("Could not open this photo. Please choose another image.");
-    };
-    reader.readAsDataURL(file);
+      setOcrMessage(err.message || "Could not save this scan.");
+      setToast(err.message || "Could not save this scan.");
+    } finally {
+      setImageProcessing(false);
+    }
   };
 
   const takeOrSelectPhoto = async () => {
@@ -311,7 +405,7 @@ function App() {
         if (photo?.webPath) {
           const response = await fetch(photo.webPath);
           const blob = await response.blob();
-          const file = new File([blob], "food_label.jpg", { type: "image/jpeg" });
+          const file = new File([blob], "food_label.jpg", { type: blob.type || "image/jpeg" });
           scanImage(file);
         }
       } catch (err) {
@@ -329,68 +423,48 @@ function App() {
     setOcrPreviewUrl(null);
   };
 
-  const scan = async (knownCode = null) => {
+  const scan = async () => {
     setScanning(true);
     setToast("");
     setPage("scan");
-    let code = knownCode;
-    if (!code) {
-      try {
-        if (window.Capacitor?.isNativePlatform?.()) {
-          let permission = await Camera.checkPermissions();
-          if (permission.camera !== "granted") {
-            permission = await Camera.requestPermissions({ permissions: ["camera"] });
-          }
-          if (permission.camera !== "granted") {
-            setToast("Camera access is off. Allow camera permission to scan barcodes.");
-            setScanning(false);
-            return;
-          }
-        }
-        const result = await CapacitorBarcodeScanner.scanBarcode({
-          hint: CapacitorBarcodeScannerTypeHint.ALL,
-          scanInstructions: "Place the product barcode inside the frame",
-          cameraDirection: CapacitorBarcodeScannerCameraDirection.BACK,
-          scanOrientation: CapacitorBarcodeScannerScanOrientation.PORTRAIT,
-          android: { scanningLibrary: CapacitorBarcodeScannerAndroidScanningLibrary.ZXING }
-        });
-        code = result?.ScanResult?.trim();
-      } catch (error) {
-        console.warn("Barcode scan cancelled or unavailable", error);
-        const errorText = String(error?.message || error).toLowerCase();
-        const cancelled = /cancel|dismiss|closed|back/.test(errorText);
-        const cameraUnavailable = /camera|permission|hardware|unavailable|not supported/.test(errorText);
-        if (!cancelled && cameraUnavailable) {
-          setToast("Camera is unavailable. Check camera permission and try again.");
-        }
-        setScanning(false);
-        return;
+    try {
+      if (window.Capacitor?.isNativePlatform?.()) {
+        let permission = await Camera.checkPermissions();
+        if (permission.camera !== "granted") permission = await Camera.requestPermissions({ permissions: ["camera"] });
+        if (permission.camera !== "granted") throw new Error("Camera access is off. Allow camera permission to scan products.");
       }
-    }
-    if (!code) {
-      setToast("No barcode was scanned. Try again and keep the barcode inside the frame.");
+      const photo = window.Capacitor?.isNativePlatform?.()
+        ? await Camera.getPhoto({ quality: 90, allowEditing: false, resultType: CameraResultType.Uri, source: CameraSource.Camera })
+        : await new Promise((resolve, reject) => {
+            const input = document.getElementById("sahi-camera-file-input");
+            if (!input) return reject(new Error("Camera or image selection is unavailable."));
+            input.onchange = () => { const selected = input.files?.[0]; input.value = ""; selected ? resolve({ file: selected }) : reject(new Error("Product photo selection cancelled.")); };
+            input.click();
+          });
+      if (photo?.file) { await scanImage(photo.file); return; }
+      if (!photo?.webPath) throw new Error("The product photo was not captured.");
+      const response = await fetch(photo.webPath);
+      const blob = await response.blob();
+      const ext = blob.type === "image/png" ? "png" : blob.type === "image/webp" ? "webp" : "jpg";
+      const file = new File([blob], `food-scan.${ext}`, { type: blob.type || "image/jpeg" });
+      await scanImage(file);
+    } catch (error) {
+      const text = String(error?.message || error);
+      if (!/cancel|dismiss|closed|back/i.test(text)) setToast(text || "Could not capture the product image.");
+    } finally {
       setScanning(false);
-      return;
     }
-    if (backendReady) {
-      try {
-        const result = await api("/scans", { method: "POST", body: JSON.stringify({ barcode: code, profile_id: Number(profile.id) }) });
-        const found = { ...result.product, resultType: result.verdict, scanId: result.id, sahiScore: result.sahi_score, backendReason: result.reason };
-        setProduct(found);
-        setScanHistory(prev => [found, ...prev.filter(item => item.scanId !== found.scanId)].slice(0, 12));
-        setScanning(false);
-        return;
-      } catch (error) {
-        setToast(error.message?.includes("Product barcode not found")
-          ? `Barcode ${code} was scanned, but this product is not in the catalog yet.`
-          : error.message || "Backend scan failed.");
-        setScanning(false);
-        return;
-      }
+  };
+
+  const openSavedScan = async item => {
+    if (!item?.scanId) { setProduct(item); setPage("scan"); return; }
+    try {
+      const record = await api(`/scans/${item.scanId}`);
+      setProduct(mapScanRecord(record));
+      setPage("scan");
+    } catch (error) {
+      setToast(error.message || "Could not open this scan.");
     }
-    // No backend or unauthenticated: do not fabricate scan results. Notify user.
-    setToast("Backend unavailable or unauthenticated. Start backend and sign in to perform scans.");
-    setScanning(false);
   };
 
   const speak = (text) => {
@@ -525,7 +599,7 @@ function App() {
         {page === "recent" && (
           <RecentScansPage
             scans={scanHistory}
-            onOpen={(item) => { setProduct(item); setPage("scan"); }}
+            onOpen={openSavedScan}
             onScan={() => scan()}
             language={language}
           />
@@ -534,7 +608,7 @@ function App() {
         {page === "favorites" && (
           <FavoritesPage
             favorites={favorites}
-            onOpen={(item) => { setProduct(item); setPage("scan"); }}
+            onOpen={openSavedScan}
             onRemove={toggleFavorite}
             onScan={() => scan()}
             language={language}
@@ -577,7 +651,7 @@ function RecentScansPage({ scans, onOpen, onScan, language }) {
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState("ALL");
   const filtered = scans.filter(item => {
-    const matchesQuery = item.name.toLowerCase().includes(query.toLowerCase()) || (item.brand || "").toLowerCase().includes(query.toLowerCase());
+    const matchesQuery = (item.name || "").toLowerCase().includes(query.toLowerCase()) || (item.brand || "").toLowerCase().includes(query.toLowerCase()) || (item.barcode || "").includes(query);
     const status = item.resultType === "AGREED" ? "GOOD" : item.resultType === "DISAGREED" ? "ATTENTION" : "UNCLEAR";
     return matchesQuery && (filter === "ALL" || status === filter);
   });
@@ -596,12 +670,15 @@ function RecentScansPage({ scans, onOpen, onScan, language }) {
       </section>
       <div className="food-grid">
         {filtered.map((item, i) => (
-          <button className="food-card" key={`${item.name}-${i}`} onClick={() => onOpen(item)}>
-            <div className="food-card-image">{item.image}</div>
+          <button className="food-card" key={item.scanId ?? `${item.name}-${i}`} onClick={() => onOpen(item)}>
+            <div className="food-card-image">
+              {item.scanRecord?.capturedImageUrl ? <CapturedScanImage src={item.scanRecord.capturedImageUrl} alt="Captured product" /> : item.image || ""}
+            </div>
             <div className="food-card-body">
-              <span className="pill">{item.category}</span>
+              <span className="pill">{item.category || "Scan"}</span>
               <h3>{item.name}</h3>
-              <p>{item.brand}</p>
+              <p>{item.brand || item.barcode || "Product not identified"}</p>
+              {item.scanRecord?.createdAt && <small>{scanDate(item.scanRecord.createdAt)}</small>}
               <div className="food-card-status">
                 <b>{item.resultType === "AGREED" ? "✓ Good" : item.resultType === "DISAGREED" ? "⚠ Needs attention" : "– Unclear"}</b>
                 <span>View scan →</span>
@@ -632,9 +709,9 @@ function FavoritesPage({ favorites, onOpen, onRemove, onScan, language }) {
       ) : (
         <div className="food-grid">
           {favorites.map((item, i) => (
-            <article className="food-card" key={`${item.name}-${i}`}>
+            <article className="food-card" key={item.scanId ?? `${item.name}-${i}`}>
               <button className="food-card-open" onClick={() => onOpen(item)}>
-                <div className="food-card-image">{item.image}</div>
+                <div className="food-card-image">{item.scanRecord?.capturedImageUrl ? <CapturedScanImage src={item.scanRecord.capturedImageUrl} alt="Captured product" /> : item.image || ""}</div>
                 <div className="food-card-body">
                   <span className="pill">{item.category}</span>
                   <h3>{item.name}</h3>
@@ -988,8 +1065,8 @@ function ScanPage({
 
         <section className="scanner-stage card">
           <div className="scanner-stage-head">
-            <div><p className="eyebrow">BARCODE SCAN</p><h2>Place the barcode inside the frame</h2></div>
-            <span className={`scanner-live state-badge ${ocrState?.toLowerCase() || 'ready'}`}>● {ocrState || 'READY'}</span>
+            <div><p className="eyebrow">PRODUCT SCAN</p><h2>Take a clear photo of the package</h2></div>
+            <span className={`scanner-live state-badge ${ocrState?.toLowerCase() || 'ready'}`}>● {imageProcessing ? "SAVING SCAN" : ocrState || 'READY'}</span>
           </div>
 
           {ocrPreviewUrl && (
@@ -1063,8 +1140,10 @@ function ScanPage({
     );
   }
 
-  const sodiumFlag = product.nutrition.sodium > profile.sodium;
-  const sugarFlag = product.nutrition.sugar > profile.sugar;
+  const sodiumFlag = typeof product.nutrition.sodium === "number" && product.nutrition.sodium > profile.sodium;
+  const sugarFlag = typeof product.nutrition.sugar === "number" && product.nutrition.sugar > profile.sugar;
+  const shownImage = product.scanRecord?.capturedImageUrl || product.image_url;
+  const nutritionLabel = (value, unit) => value == null ? "Not available" : `${value}${unit}`;
 
   return (
     <div className="content">
@@ -1079,12 +1158,14 @@ function ScanPage({
       <div className="packet-reminder">{ui("checkDate", "Check the date. Check the seal.")} <b>{ui("snapCode", "Snap the code before the grab.")}</b></div>
 
       <section className="product-header card">
-        <div className="product-emoji">{product.image}</div>
+        <div className={`product-emoji ${shownImage ? "product-image-frame" : ""}`}>{product.scanRecord?.capturedImageUrl ? <CapturedScanImage src={product.scanRecord.capturedImageUrl} alt="Scanned product package" /> : product.image_url ? <img src={product.image_url} alt="Product package" /> : product.image || ""}</div>
         <div className="product-main">
-          <span className="pill">{product.category}</span>
+          <span className="pill">{product.category || "Scanned product"}</span>
           <h2>{product.name}</h2>
-          <p>{product.brand} · {product.manufacturer}</p>
-          <div className="verified">✓ {product.fssai}</div>
+          <p>{[product.brand, product.manufacturer].filter(Boolean).join(" · ") || "Product details not identified"}</p>
+          {product.fssai && <div className="verified">✓ {product.fssai}</div>}
+          {product.barcode && <div className="evidence-row"><span>Barcode</span><b>{product.barcode}</b></div>}
+          {product.scanRecord?.createdAt && <div className="evidence-row"><span>Scanned</span><b>{scanDate(product.scanRecord.createdAt)}</b></div>}
         </div>
         <div className={`verdict-badge ${verdict.verdict.toLowerCase()}`}>
           <span>{verdict.verdict === "AGREED" ? "✓" : verdict.verdict === "DISAGREED" ? "!" : "–"}</span>
@@ -1096,11 +1177,16 @@ function ScanPage({
       <div className="grid-2">
         <section className="card">
           <div className="card-title"><div><p className="eyebrow">{ui("nutrition", "NUTRITION")}</p><h2>{ui("labelSays", "What the label says")}</h2></div><button className="icon-btn" onClick={onSpeak}>🔊</button></div>
-          <NutritionRow name="Sodium" value={`${product.nutrition.sodium} mg / 100 g`} flag={sodiumFlag} />
-          <NutritionRow name="Sugar" value={`${product.nutrition.sugar} g / 100 g`} flag={sugarFlag} />
-          <NutritionRow name="Carbohydrates" value={`${product.nutrition.carbs} g / 100 g`} />
-          <NutritionRow name="Fat" value={`${product.nutrition.fat} g / 100 g`} />
-          <NutritionRow name="Saturated fat" value={`${product.nutrition.satFat} g / 100 g`} />
+          <NutritionRow name="Energy" value={nutritionLabel(product.nutrition.energy, " kcal / 100 g")} />
+          <NutritionRow name="Sodium" value={nutritionLabel(product.nutrition.sodium, " mg / 100 g")} flag={sodiumFlag} />
+          <NutritionRow name="Sugar" value={nutritionLabel(product.nutrition.sugar, " g / 100 g")} flag={sugarFlag} />
+          <NutritionRow name="Added sugar" value={nutritionLabel(product.nutrition.addedSugar, " g / 100 g")} />
+          <NutritionRow name="Carbohydrates" value={nutritionLabel(product.nutrition.carbs, " g / 100 g")} />
+          <NutritionRow name="Protein" value={nutritionLabel(product.nutrition.protein, " g / 100 g")} />
+          <NutritionRow name="Fat" value={nutritionLabel(product.nutrition.fat, " g / 100 g")} />
+          <NutritionRow name="Saturated fat" value={nutritionLabel(product.nutrition.satFat, " g / 100 g")} />
+          <NutritionRow name="Trans fat" value={nutritionLabel(product.nutrition.transFat, " g / 100 g")} />
+          <NutritionRow name="Fibre" value={nutritionLabel(product.nutrition.fiber, " g / 100 g")} />
           <div className="source-line">Source: curated product data · published reference where applicable</div>
         </section>
 
@@ -1130,6 +1216,8 @@ function ScanPage({
             </button>
           ))}
         </div>
+        {!product.ingredients.length && <p className="disclaimer">No ingredient information available.</p>}
+        {!!product.allergens?.length && <div className="evidence-row"><span>Allergens</span><b>{product.allergens.map(item => item.name).join(", ")}</b></div>}
         <div className="legend">
           <span><i className="dot green"></i>{ingredientCopy.legend[0]}</span>
           <span><i className="dot yellow"></i>{ingredientCopy.legend[1]}</span>
@@ -1139,13 +1227,15 @@ function ScanPage({
         </div>
       </section>
 
-      {product.ocr && (
+      {(product.ocr || product.scanRecord) && (
         <section className="card ocr-evidence-card">
           <div className="card-title"><div><p className="eyebrow">IMAGE EVIDENCE</p><h2>What the camera read</h2></div><span className="official-pill">{product.workflow?.product_matched ? "MATCHED" : "OCR ONLY"}</span></div>
-          <div className="evidence-row"><span>Barcode / code</span><b>{product.workflow?.barcode_detected ? (product.barcode || "Detected") : "Not detected"}</b></div>
-          <div className="evidence-row"><span>OCR status</span><b>{product.workflow?.ocr_completed ? "Completed" : "Needs review"}</b></div>
+          {product.barcode && <div className="evidence-row"><span>Barcode / code</span><b>{product.barcode}</b></div>}
+          {product.scanRecord?.createdAt && <div className="evidence-row"><span>Scan date</span><b>{scanDate(product.scanRecord.createdAt)}</b></div>}
+          <div className="evidence-row"><span>OCR status</span><b>{product.ocr?.text || product.scanRecord?.ocrText ? "Text available" : "No text extracted"}</b></div>
           {product.ocr?.fields?.name && <div className="evidence-row"><span>Extracted name</span><b>{product.ocr.fields.name}</b></div>}
-          <details><summary>Show extracted text</summary><pre className="ocr-text">{product.ocr.text || "No readable text was returned."}</pre></details>
+          {product.scanRecord?.capturedImageUrl && <CapturedScanImage className="scan-captured-image" src={product.scanRecord.capturedImageUrl} alt="Actual captured food package" />}
+          {(product.ocr?.text || product.scanRecord?.ocrText) && <details><summary>Show extracted text</summary><pre className="ocr-text">{product.ocr?.text || product.scanRecord.ocrText}</pre></details>}
           <p className="disclaimer">OCR is evidence extraction, not proof that every character or nutrition value is correct. Check the label image when the result is UNCLEAR.</p>
         </section>
       )}
@@ -1293,16 +1383,19 @@ function SahiSaathPage({ language, setLanguage, product, profile }) {
         : "No product is scanned yet. Scan a product first and I can explain its label, nutrition and ingredients from the available data.";
     }
     if (/sodium|salt|नमक|ಉಪ್ಪು|ఉప్పు|உப்பு/.test(normalized)) {
+      if (typeof product.nutrition.sodium !== "number") return "Sodium information is not available for this scan.";
       return language === "HI"
         ? `${product.name} में सोडियम ${product.nutrition.sodium} mg/100 g है। ${profile.name} की सीमा ${profile.sodium} mg/100 g है, इसलिए यह ${product.nutrition.sodium > profile.sodium ? "सीमा से अधिक" : "सीमा के अंदर"} है।`
         : `${product.name} has ${product.nutrition.sodium} mg sodium per 100 g. ${profile.name}'s configured limit is ${profile.sodium} mg/100 g, so it is ${product.nutrition.sodium > profile.sodium ? "above" : "within"} the limit.`;
     }
     if (/sugar|चीनी|ಸಕ್ಕರೆ|చక్కెర|சர்க்கரை/.test(normalized)) {
+      if (typeof product.nutrition.sugar !== "number") return "Sugar information is not available for this scan.";
       return language === "HI"
         ? `इस उत्पाद में चीनी ${product.nutrition.sugar} g/100 g है। ${profile.name} की सीमा ${profile.sugar} g/100 g है।`
         : `This product has ${product.nutrition.sugar} g sugar per 100 g. ${profile.name}'s configured limit is ${profile.sugar} g/100 g.`;
     }
     if (/ingredient|सामग्री|ಪದಾರ್ಥ|పదార్థం|பொருள்/.test(normalized)) {
+      if (!product.ingredients.length) return "Ingredient information is not available for this scan.";
       return language === "HI"
         ? `घोषित सामग्री: ${product.ingredients.map(item => item.name).join(", ")}। किसी सामग्री पर टैप करके उसका विवरण भी देख सकते हैं।`
         : `The declared ingredients are: ${product.ingredients.map(item => item.name).join(", ")}. Tap an ingredient in the scan result for its explanation.`;
@@ -1422,7 +1515,8 @@ function VoiceModal({ onClose, onSpeak, product, profile }) {
       const text = e.results[0][0].transcript;
       setHeard(text);
       if (/why|disagree|flag/i.test(text) && product) {
-        const sodium = product.nutrition.sodium;
+        const sodium = product.nutrition?.sodium;
+        if (typeof sodium !== "number") { onSpeak("Sodium information is not available for this scan."); return; }
         onSpeak(`ASATAS disagreed for ${profile.name}. Sodium is ${sodium} milligrams per 100 grams, compared with the selected preference of ${profile.sodium} milligrams per 100 grams.`);
       } else {
         onSpeak("I can check a product, explain a flag, explain an ingredient, show alternatives, check loose food, or help file a report.");
