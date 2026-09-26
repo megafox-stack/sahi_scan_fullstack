@@ -7,7 +7,7 @@ def ensure_schema():
     # SQLite-safe additive migration for databases created by the earlier MVP.
     additions = {
         "products": {
-            "code_type":"VARCHAR(40)","marketer":"VARCHAR(180)","fssai_license":"VARCHAR(32)","fssai_status":"VARCHAR(40)","fssai_source_url":"VARCHAR(500)","fssai_verified_at":"DATETIME","evidence_status":"VARCHAR(30)","source":"VARCHAR(120)","source_url":"VARCHAR(500)","image_url":"VARCHAR(500)"
+            "code_type":"VARCHAR(40)","marketer":"VARCHAR(180)","fssai_license":"VARCHAR(32)","fssai_status":"VARCHAR(40)","fssai_source_url":"VARCHAR(500)","fssai_verified_at":"DATETIME","evidence_status":"VARCHAR(30)","source":"VARCHAR(120)","source_url":"VARCHAR(500)","image_url":"VARCHAR(500)","ingredients_text":"TEXT","nutrition_grade":"VARCHAR(8)"
         },
         "scans": {"captured_image_path":"VARCHAR(500)","ocr_text":"TEXT","barcode":"VARCHAR(32)"},
         "nutrition": {"trans_fat":"FLOAT","added_sugar":"FLOAT","protein":"FLOAT","fiber":"FLOAT","serving_size":"FLOAT","serving_unit":"VARCHAR(20)","source":"VARCHAR(120)"},

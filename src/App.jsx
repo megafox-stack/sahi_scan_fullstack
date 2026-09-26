@@ -21,16 +21,21 @@ function mapScanRecord(record) {
   const capturePath = record?.captured_image_path || record?.image_path || null;
   const barcode = record?.barcode || source.barcode || analysis.barcode || null;
   const ocrText = record?.ocr_text || analysis.ocr?.text || null;
+  const productLookupStatus = record?.workflow?.product_lookup_status || analysis.product_lookup_status || null;
   return {
     ...source,
     id: source.id ?? null,
-    name: source.name || "Unidentified scan",
+    name: source.name || (productLookupStatus === "not_found" ? "Product not found" : productLookupStatus === "unavailable" ? "Product lookup unavailable" : "Unidentified scan"),
     brand: source.brand || "",
     category: source.category || "",
     manufacturer: source.manufacturer || "",
     fssai: source.fssai || "",
     image: source.image || "",
     image_url: source.image_url || null,
+    ingredientsText: source.ingredients_text || "",
+    nutritionGrade: source.nutrition_grade || null,
+    productLookupStatus,
+    sourceUrl: source.source_url || null,
     nutrition: {
       sodium: nutrition.sodium ?? null, sugar: nutrition.sugar ?? null,
       carbs: nutrition.carbs ?? null, fat: nutrition.fat ?? null,
@@ -348,6 +353,7 @@ function App() {
     setOcrState("PROCESSING_IMAGE");
     setOcrMessage("Preparing your label photo…");
     setOcrResult("");
+    let ocrFinished = false;
 
     try {
       const base64Data = await new Promise((resolve, reject) => {
@@ -388,6 +394,7 @@ function App() {
         setOcrMessage("Open the Android app to read text from a label photo.");
           setOcrResult("");
         }
+      ocrFinished = true;
       const form = new FormData();
       form.append("file", file, file.name || "food-label.jpg");
       if (/^\d+$/.test(String(profile.id))) form.append("profile_id", String(profile.id));
@@ -399,9 +406,10 @@ function App() {
       setScanHistory(previous => [mapped, ...previous.filter(item => item.scanId !== mapped.scanId)].slice(0, 100));
       setToast(saved.product ? "Scan saved to Recent Scans." : "Image saved to Recent Scans. Product details were not identified.");
     } catch (err) {
-      setOcrState("OCR_ERROR");
-      setOcrMessage(err.message || "Could not save this scan.");
-      setToast(err.message || "Could not save this scan.");
+      const message = err.message || "Could not save this scan.";
+      if (!ocrFinished) setOcrState("OCR_ERROR");
+      setOcrMessage(ocrFinished ? `Scan could not be saved to the backend: ${message}` : message);
+      setToast(message);
     } finally {
       setImageProcessing(false);
     }
@@ -1178,7 +1186,7 @@ function ScanPage({
 
   const sodiumFlag = typeof product.nutrition.sodium === "number" && product.nutrition.sodium > profile.sodium;
   const sugarFlag = typeof product.nutrition.sugar === "number" && product.nutrition.sugar > profile.sugar;
-  const shownImage = product.scanRecord?.capturedImageUrl || product.image_url;
+  const shownImage = product.image_url || product.scanRecord?.capturedImageUrl;
   const nutritionLabel = (value, unit) => value == null ? "Not available" : `${value}${unit}`;
 
   return (
@@ -1194,13 +1202,14 @@ function ScanPage({
       <div className="packet-reminder">{ui("checkDate", "Check the date. Check the seal.")} <b>{ui("snapCode", "Snap the code before the grab.")}</b></div>
 
       <section className="product-header card">
-        <div className={`product-emoji ${shownImage ? "product-image-frame" : ""}`}>{product.scanRecord?.capturedImageUrl ? <CapturedScanImage src={product.scanRecord.capturedImageUrl} alt="Scanned product package" /> : product.image_url ? <img src={product.image_url} alt="Product package" /> : product.image || ""}</div>
+        <div className={`product-emoji ${shownImage ? "product-image-frame" : ""}`}>{product.image_url ? <img src={product.image_url} alt="Open Food Facts product image" /> : product.scanRecord?.capturedImageUrl ? <CapturedScanImage src={product.scanRecord.capturedImageUrl} alt="Scanned product package" /> : product.image || ""}</div>
         <div className="product-main">
-          <span className="pill">{product.category || "Scanned product"}</span>
+          <span className="pill">{product.productLookupStatus === "not_found" ? "Product not found" : product.productLookupStatus === "unavailable" ? "Lookup unavailable" : product.category || (product.productLookupStatus === "found" ? "Open Food Facts" : "Scanned product")}</span>
           <h2>{product.name}</h2>
-          <p>{[product.brand, product.manufacturer].filter(Boolean).join(" · ") || "Product details not identified"}</p>
+          <p>{product.productLookupStatus === "not_found" ? "No matching product in Open Food Facts." : product.productLookupStatus === "unavailable" ? "Open Food Facts could not be reached. Your scan was saved." : [product.brand, product.manufacturer].filter(Boolean).join(" · ") || "Product details not identified"}</p>
           {product.fssai && <div className="verified">✓ {product.fssai}</div>}
           {product.barcode && <div className="evidence-row"><span>Barcode</span><b>{product.barcode}</b></div>}
+          {product.nutritionGrade && <div className="evidence-row"><span>Nutrition grade</span><b>{product.nutritionGrade.toUpperCase()}</b></div>}
           {product.scanRecord?.createdAt && <div className="evidence-row"><span>Scanned</span><b>{scanDate(product.scanRecord.createdAt)}</b></div>}
         </div>
         <div className={`verdict-badge ${verdict.verdict.toLowerCase()}`}>
@@ -1223,7 +1232,8 @@ function ScanPage({
           <NutritionRow name="Saturated fat" value={nutritionLabel(product.nutrition.satFat, " g / 100 g")} />
           <NutritionRow name="Trans fat" value={nutritionLabel(product.nutrition.transFat, " g / 100 g")} />
           <NutritionRow name="Fibre" value={nutritionLabel(product.nutrition.fiber, " g / 100 g")} />
-          <div className="source-line">Source: curated product data · published reference where applicable</div>
+          <NutritionRow name="Serving size" value={product.nutrition.servingSize == null ? "Not available" : `${product.nutrition.servingSize} ${product.nutrition.servingUnit || ""}`.trim()} />
+          <div className="source-line">Source: {product.source || "Not provided"}{product.sourceUrl ? <> · <a href={product.sourceUrl} target="_blank" rel="noreferrer">View source</a></> : ""}</div>
         </section>
 
         {verdict.verdict === "DISAGREED" && (
@@ -1252,7 +1262,8 @@ function ScanPage({
             </button>
           ))}
         </div>
-        {!product.ingredients.length && <p className="disclaimer">No ingredient information available.</p>}
+        {product.ingredientsText && <p className="disclaimer"><b>Ingredients: </b>{product.ingredientsText}</p>}
+        {!product.ingredients.length && !product.ingredientsText && <p className="disclaimer">No ingredient information available.</p>}
         {!!product.allergens?.length && <div className="evidence-row"><span>Allergens</span><b>{product.allergens.map(item => item.name).join(", ")}</b></div>}
         <div className="legend">
           <span><i className="dot green"></i>{ingredientCopy.legend[0]}</span>
@@ -1265,7 +1276,7 @@ function ScanPage({
 
       {(product.ocr || product.scanRecord) && (
         <section className="card ocr-evidence-card">
-          <div className="card-title"><div><p className="eyebrow">IMAGE EVIDENCE</p><h2>What the camera read</h2></div><span className="official-pill">{product.workflow?.product_matched ? "MATCHED" : "OCR ONLY"}</span></div>
+          <div className="card-title"><div><p className="eyebrow">IMAGE EVIDENCE</p><h2>What the camera read</h2></div><span className="official-pill">{product.productLookupStatus === "found" ? "OPEN FOOD FACTS" : product.productLookupStatus === "not_found" ? "PRODUCT NOT FOUND" : product.productLookupStatus === "unavailable" ? "LOOKUP UNAVAILABLE" : product.workflow?.product_matched ? "MATCHED" : "OCR ONLY"}</span></div>
           {product.barcode && <div className="evidence-row"><span>Barcode / code</span><b>{product.barcode}</b></div>}
           {product.scanRecord?.createdAt && <div className="evidence-row"><span>Scan date</span><b>{scanDate(product.scanRecord.createdAt)}</b></div>}
           <div className="evidence-row"><span>OCR status</span><b>{product.ocr?.text || product.scanRecord?.ocrText ? "Text available" : "No text extracted"}</b></div>
