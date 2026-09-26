@@ -153,6 +153,27 @@ async def scan_image(file: UploadFile = File(...), profile_id: int | None = Form
 def recent_scans(limit: int = 20, user=Depends(current_user), db: Session = Depends(get_db)):
     rows = db.query(Scan).options(joinedload(Scan.product).joinedload(Product.nutrition), joinedload(Scan.product).joinedload(Product.ingredients), joinedload(Scan.product).joinedload(Product.allergens)).filter_by(user_id=user.id).order_by(Scan.created_at.desc()).limit(min(limit,100)).all(); return [scan_to_dict(s) for s in rows]
 
+@router.delete("/scans")
+def clear_recent_scans(user=Depends(current_user), db: Session = Depends(get_db)):
+    rows = db.query(Scan).filter_by(user_id=user.id).all()
+    image_paths = [s.captured_image_path or s.image_path for s in rows]
+    scan_ids = [s.id for s in rows]
+    if scan_ids:
+        db.query(Favorite).filter(Favorite.user_id == user.id, Favorite.scan_id.in_(scan_ids)).delete(synchronize_session=False)
+        db.query(Scan).filter(Scan.user_id == user.id, Scan.id.in_(scan_ids)).delete(synchronize_session=False)
+        db.commit()
+    for relative_path in image_paths:
+        if not relative_path:
+            continue
+        image_path = (UPLOAD_DIR / relative_path).resolve()
+        try:
+            image_path.relative_to(UPLOAD_DIR.resolve())
+        except ValueError:
+            continue
+        if image_path.is_file():
+            image_path.unlink()
+    return {"deleted": len(scan_ids)}
+
 @router.get("/scans/{scan_id}", response_model=dict)
 def get_scan(scan_id: int, user=Depends(current_user), db: Session = Depends(get_db)):
     s = db.query(Scan).options(joinedload(Scan.product).joinedload(Product.nutrition), joinedload(Scan.product).joinedload(Product.ingredients), joinedload(Scan.product).joinedload(Product.allergens)).filter_by(id=scan_id,user_id=user.id).first()

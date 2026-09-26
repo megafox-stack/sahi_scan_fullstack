@@ -1,6 +1,6 @@
-# ASATAS Sahi Scan
+# Aarambh Sahi Scan
 
-ASATAS Sahi Scan is a frontend demo for understanding packaged food labels and food-safety signals in an India-focused experience. It explains nutrition against a selected family profile and keeps the reasoning visible.
+Aarambh Sahi Scan is a frontend demo for understanding packaged food labels and food-safety signals in an India-focused experience. It explains nutrition against a selected family profile and keeps the reasoning visible.
 
 ## Features
 

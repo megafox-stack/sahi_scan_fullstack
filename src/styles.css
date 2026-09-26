@@ -30,7 +30,8 @@ button { cursor: pointer; }
 .app-shell { min-height: 100vh; display: flex; }
 .sidebar { width: 250px; background: #fff; border-right: 1px solid var(--line); padding: 26px 18px; display: flex; flex-direction: column; position: fixed; inset: 0 auto 0 0; z-index: 5; }
 .brand { display: flex; gap: 12px; align-items: center; padding: 4px 10px 34px; }
-.brand-mark { width: 40px; height: 40px; border-radius: 13px; background: var(--green); color: white; display: grid; place-items: center; font: 800 22px Manrope; }
+.brand-mark { width: 40px; height: 40px; border-radius: 13px; overflow: hidden; display: grid; place-items: center; flex: 0 0 auto; }
+.brand-mark img { width: 100%; height: 100%; object-fit: cover; }
 .brand strong { display: block; font: 800 20px Manrope; letter-spacing: .04em; }
 .brand span { display: block; color: var(--muted); font-size: 11px; margin-top: 1px; }
 nav { display: grid; gap: 6px; }
@@ -49,8 +50,11 @@ nav { display: grid; gap: 6px; }
 .text-btn { border: 0; background: none; color: var(--green); font-size: 12px; font-weight: 700; padding: 13px 4px; }
 
 .main { margin-left: 250px; width: calc(100% - 250px); min-height: 100vh; }
-.topbar { height: 70px; border-bottom: 1px solid var(--line); background: rgba(255,255,255,.92); backdrop-filter: blur(8px); display: flex; align-items: center; justify-content: flex-end; padding: 0 38px; position: sticky; top: 0; z-index: 4; }
-.mobile-brand { display: none; }
+.topbar { height: 70px; border-bottom: 1px solid var(--line); background: rgba(255,255,255,.92); backdrop-filter: blur(8px); display: flex; align-items: center; justify-content: space-between; padding: 0 38px; position: sticky; top: 0; z-index: 4; }
+.mobile-brand { display: flex; align-items: center; gap: 6px; color: var(--green-dark); font-size: 13px; white-space: nowrap; }
+.mobile-brand img { width: 34px; height: 34px; object-fit: contain; flex: 0 0 auto; }
+.mobile-brand span { color: var(--muted); }
+.mobile-brand b { color: var(--green-dark); }
 .top-actions { display: flex; gap: 10px; }
 .language, .voice-btn { border: 1px solid var(--line); background: white; padding: 9px 13px; border-radius: 10px; font-weight: 600; color: #46534d; }
 .voice-btn { color: var(--green-dark); border-color: #cfe5dc; background: var(--green-soft); }
@@ -93,6 +97,9 @@ h3 { margin: 0; font-size: 16px; }
 
 .page-title-row { display: flex; align-items: end; justify-content: space-between; margin-bottom: 22px; }
 .page-title-row h1 { font-size: 40px; margin-bottom: 0; }
+.recent-page-actions { display: flex; align-items: center; gap: 10px; }
+.clear-scans-btn { border: 1px solid #d8e2de; border-radius: 11px; padding: 11px 14px; color: #52645d; background: white; font: inherit; font-weight: 700; }
+.clear-scans-btn:disabled { opacity: .45; cursor: not-allowed; }
 .packet-reminder { background: var(--yellow-soft); border: 1px solid #f0dfad; padding: 12px 15px; border-radius: 11px; color: #765711; margin-bottom: 15px; font-size: 13px; }
 .product-header { display: flex; gap: 20px; align-items: center; padding: 23px; margin-bottom: 15px; }
 .product-emoji { width: 86px; height: 86px; display: grid; place-items: center; background: #f3f6f4; border-radius: 18px; font-size: 44px; }
@@ -263,7 +270,6 @@ body { background: var(--app-bg); color: var(--app-ink); }
 .text-btn { color: #b5ead1; }
 .main { margin-left: 232px; width: calc(100% - 232px); }
 .topbar { height: 64px; padding: 0 34px; background: rgba(255,255,255,.92); }
-.topbar::before { content: "WORKSPACE"; margin-right: auto; color: #84928d; font: 800 10px Manrope, sans-serif; letter-spacing: .16em; }
 .language, .voice-btn { border-radius: 9px; }
 .language { display: inline-flex; align-items: center; justify-content: center; gap: 5px; min-width: 66px; height: 48px; padding: 6px 12px; }
 .language b { font-size: 16px; }
@@ -334,8 +340,6 @@ body { background: var(--app-bg); color: var(--app-ink); }
   .sidebar { display: none; }
   .main { margin-left: 0; width: 100%; }
   .topbar { padding: 0 18px; }
-  .topbar::before { content: "ASATAS · SAHI SCAN"; color: var(--green-dark); letter-spacing: .08em; }
-  .mobile-brand { display: none; }
   .mobile-nav { position: fixed; z-index: 6; bottom: 14px; left: 50%; transform: translateX(-50%); width: min(430px, calc(100% - 28px)); display: grid; grid-template-columns: repeat(4, 1fr); gap: 3px; padding: 6px; border: 1px solid #d7e4dd; border-radius: 15px; background: rgba(255,255,255,.94); box-shadow: 0 12px 35px rgba(23,43,58,.18); backdrop-filter: blur(12px); }
   .mobile-nav .nav-item { justify-content: center; flex-direction: column; gap: 2px; padding: 7px 3px; border-radius: 9px; font-size: 10px; }
   .mobile-nav .nav-item span { font-size: 17px; line-height: 1; }
@@ -353,7 +357,6 @@ body { background: var(--app-bg); color: var(--app-ink); }
 }
 
 @media (max-width: 800px) {
-  .topbar::before { display: none; }
   .topbar { height: 60px; padding: 0 12px; }
   .mobile-brand { font-size: 13px; white-space: nowrap; }
   .top-actions { gap: 0; }
@@ -365,8 +368,7 @@ body { background: var(--app-bg); color: var(--app-ink); }
 }
 
 @media (max-width: 390px) {
-  .mobile-brand span { display: none; }
-  .mobile-brand b::after { content: " · Sahi Scan"; font-weight: 500; }
+  .mobile-brand img { width: 30px; height: 30px; }
   .language { min-width: 52px; padding-inline: 7px; }
   .voice-btn { min-width: 145px; padding-inline: 9px; }
   .sahi-btn { padding-inline: 8px; font-size: 10px; }
@@ -383,8 +385,6 @@ body { background: var(--app-bg); color: var(--app-ink); }
   .sidebar { display: none; }
   .main { margin-left: 0; width: 100%; }
   .topbar { justify-content: space-between; padding: 0 18px; }
-  .mobile-brand { display: block; color: var(--green-dark); }
-  .mobile-brand span { color: var(--muted); }
   .content { padding: 28px 18px 60px; }
   .top-actions .voice-btn { display: none; }
   .grid-2 { grid-template-columns: 1fr; }
@@ -406,6 +406,8 @@ body { background: var(--app-bg); color: var(--app-ink); }
   .quick-grid { grid-template-columns: 1fr; }
   .hero-actions { flex-direction: column; }
   .page-title-row { align-items: start; gap: 12px; flex-direction: column; }
+  .recent-page-actions { width: 100%; }
+  .recent-page-actions .primary-btn { margin-left: auto; }
   .product-main h2 { font-size: 22px; }
   .product-emoji { width: 64px; height: 64px; font-size: 32px; }
   .quality-stats { grid-template-columns: 1fr; }

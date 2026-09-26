@@ -65,11 +65,24 @@ function scanDate(value) {
 
 
 async function api(path, options = {}) {
-  const token = localStorage.getItem("sahi_scan_token");
-  const headers = { ...(options.headers || {}) };
-  if (token) headers.Authorization = `Bearer ${token}`;
-  if (!(options.body instanceof FormData)) headers["Content-Type"] = "application/json";
-  const response = await fetch(`${API_BASE}${path}`, { ...options, headers });
+  const request = async token => {
+    const headers = { ...(options.headers || {}) };
+    if (token) headers.Authorization = `Bearer ${token}`;
+    if (!(options.body instanceof FormData)) headers["Content-Type"] = "application/json";
+    return fetch(`${API_BASE}${path}`, { ...options, headers });
+  };
+
+  let token = localStorage.getItem("sahi_scan_token");
+  let response = await request(token);
+  if (response.status === 401 && path !== "/auth/guest") {
+    const guestResponse = await fetch(`${API_BASE}/auth/guest`, { method: "POST" });
+    if (guestResponse.ok) {
+      const guest = await guestResponse.json();
+      token = guest.access_token;
+      localStorage.setItem("sahi_scan_token", token);
+      response = await request(token);
+    }
+  }
   if (!response.ok) throw new Error((await response.json().catch(() => ({}))).detail || `Request failed (${response.status})`);
   return response.json();
 }
@@ -227,11 +240,11 @@ const HOME_COPY = {
 };
 
 const INGREDIENT_COPY = {
-  EN: { explorer: "INGREDIENT EXPLORER", what: "What is it?", why: "Why is ASATAS showing it?", detected: "It was detected in the declared ingredient information and its relevance is determined by the selected profile and ingredient rules.", source: "Source: demo product dataset · official reference can be attached in the backend version.", description: name => name, legend: ["No conflict", "Preference relevant", "Additive", "Declared allergen", "Contributes to disagreement"], names: {} },
-  HI: { explorer: "सामग्री विवरण", what: "यह क्या है?", why: "ASATAS इसे क्यों दिखा रहा है?", detected: "यह घोषित सामग्री की जानकारी में पाया गया है। इसकी प्रासंगिकता चुनी गई प्रोफ़ाइल और सामग्री नियमों के आधार पर तय होती है।", source: "स्रोत: डेमो उत्पाद डेटासेट · आधिकारिक संदर्भ बैकएंड संस्करण में जोड़ा जा सकता है।", description: name => `${name} लेबल पर घोषित सामग्री है।`, legend: ["कोई विरोध नहीं", "प्रोफ़ाइल के लिए प्रासंगिक", "एडिटिव", "घोषित एलर्जेन", "असहमति में योगदान"], names: { "Whole wheat flour": "साबुत गेहूं का आटा", "Vegetable oil": "वनस्पति तेल", Sugar: "चीनी", Salt: "नमक", "INS 322 · Lecithins": "INS 322 · लेसिथिन", "Milk solids": "दूध के ठोस पदार्थ" } },
-  KN: { explorer: "ಪದಾರ್ಥ ವಿವರ", what: "ಇದು ಏನು?", why: "ASATAS ಇದನ್ನು ಏಕೆ ತೋರಿಸುತ್ತಿದೆ?", detected: "ಇದು ಘೋಷಿತ ಪದಾರ್ಥಗಳ ಮಾಹಿತಿಯಲ್ಲಿ ಪತ್ತೆಯಾಗಿದೆ. ಇದರ ಪ್ರಸ್ತುತತೆಯನ್ನು ಆಯ್ಕೆ ಮಾಡಿದ ಪ್ರೊಫೈಲ್ ಮತ್ತು ಪದಾರ್ಥ ನಿಯಮಗಳ ಆಧಾರದ ಮೇಲೆ ನಿರ್ಧರಿಸಲಾಗುತ್ತದೆ.", source: "ಮೂಲ: ಡೆಮೊ ಉತ್ಪನ್ನ ಡೇಟಾಸೆಟ್ · ಅಧಿಕೃತ ಉಲ್ಲೇಖವನ್ನು ಬ್ಯಾಕೆಂಡ್ ಆವೃತ್ತಿಯಲ್ಲಿ ಸೇರಿಸಬಹುದು.", description: name => `${name} ಲೇಬಲ್‌ನಲ್ಲಿ ಘೋಷಿಸಲಾದ ಪದಾರ್ಥವಾಗಿದೆ.`, legend: ["ವಿರೋಧವಿಲ್ಲ", "ಪ್ರೊಫೈಲ್‌ಗೆ ಸಂಬಂಧಿಸಿದೆ", "ಸಂಯೋಜಕ", "ಘೋಷಿತ ಅಲರ್ಜೆನ್", "ಭಿನ್ನಾಭಿಪ್ರಾಯಕ್ಕೆ ಕೊಡುಗೆ"], names: { "Whole wheat flour": "ಸಂಪೂರ್ಣ ಗೋಧಿ ಹಿಟ್ಟು", "Vegetable oil": "ಸಸ್ಯಜನ್ಯ ಎಣ್ಣೆ", Sugar: "ಸಕ್ಕರೆ", Salt: "ಉಪ್ಪು", "INS 322 · Lecithins": "INS 322 · ಲೆಸಿಥಿನ್‌ಗಳು", "Milk solids": "ಹಾಲಿನ ಘನ ಪದಾರ್ಥಗಳು" } },
-  TE: { explorer: "పదార్థ వివరాలు", what: "ఇది ఏమిటి?", why: "ASATAS దీన్ని ఎందుకు చూపిస్తోంది?", detected: "ఇది ప్రకటించిన పదార్థాల సమాచారంలో గుర్తించబడింది. దీని ప్రాముఖ్యతను ఎంచుకున్న ప్రొఫైల్ మరియు పదార్థ నియమాల ఆధారంగా నిర్ణయిస్తారు.", source: "మూలం: డెమో ఉత్పత్తి డేటాసెట్ · అధికారిక సూచనను బ్యాకెండ్ వెర్షన్‌లో జోడించవచ్చు.", description: name => `${name} లేబుల్‌పై ప్రకటించిన పదార్థం.`, legend: ["విరోధం లేదు", "ప్రొఫైల్‌కు సంబంధించినది", "సంకలితం", "ప్రకటించిన అలర్జీ కారకం", "వ్యత్యాసానికి కారణం"], names: { "Whole wheat flour": "సంపూర్ణ గోధుమ పిండి", "Vegetable oil": "వెజిటబుల్ ఆయిల్", Sugar: "చక్కెర", Salt: "ఉప్పు", "INS 322 · Lecithins": "INS 322 · లెసిథిన్లు", "Milk solids": "పాల ఘన పదార్థాలు" } },
-  TA: { explorer: "பொருள் விவரம்", what: "இது என்ன?", why: "ASATAS இதை ஏன் காட்டுகிறது?", detected: "இது அறிவிக்கப்பட்ட பொருள் தகவலில் கண்டறியப்பட்டது. இதன் தொடர்பு தேர்ந்தெடுத்த சுயவிவரம் மற்றும் பொருள் விதிகளின் அடிப்படையில் தீர்மானிக்கப்படுகிறது.", source: "மூலம்: டெமோ தயாரிப்பு தரவுத்தொகுப்பு · அதிகாரப்பூர்வ குறிப்பு பின்தள பதிப்பில் சேர்க்கலாம்.", description: name => `${name} லேபிளில் அறிவிக்கப்பட்ட பொருள்.`, legend: ["முரண்பாடு இல்லை", "சுயவிவரத்திற்கு தொடர்புடையது", "சேர்க்கை", "அறிவிக்கப்பட்ட ஒவ்வாமை பொருள்", "முரண்பாட்டிற்கு காரணம்"], names: { "Whole wheat flour": "முழு கோதுமை மாவு", "Vegetable oil": "தாவர எண்ணெய்", Sugar: "சர்க்கரை", Salt: "உப்பு", "INS 322 · Lecithins": "INS 322 · லெசித்தின்கள்", "Milk solids": "பால் திடப்பொருட்கள்" } }
+  EN: { explorer: "INGREDIENT EXPLORER", what: "What is it?", why: "Why is Aarambh showing it?", detected: "It was detected in the declared ingredient information and its relevance is determined by the selected profile and ingredient rules.", source: "Source: demo product dataset · official reference can be attached in the backend version.", description: name => name, legend: ["No conflict", "Preference relevant", "Additive", "Declared allergen", "Contributes to disagreement"], names: {} },
+  HI: { explorer: "सामग्री विवरण", what: "यह क्या है?", why: "Aarambh इसे क्यों दिखा रहा है?", detected: "यह घोषित सामग्री की जानकारी में पाया गया है। इसकी प्रासंगिकता चुनी गई प्रोफ़ाइल और सामग्री नियमों के आधार पर तय होती है।", source: "स्रोत: डेमो उत्पाद डेटासेट · आधिकारिक संदर्भ बैकएंड संस्करण में जोड़ा जा सकता है।", description: name => `${name} लेबल पर घोषित सामग्री है।`, legend: ["कोई विरोध नहीं", "प्रोफ़ाइल के लिए प्रासंगिक", "एडिटिव", "घोषित एलर्जेन", "असहमति में योगदान"], names: { "Whole wheat flour": "साबुत गेहूं का आटा", "Vegetable oil": "वनस्पति तेल", Sugar: "चीनी", Salt: "नमक", "INS 322 · Lecithins": "INS 322 · लेसिथिन", "Milk solids": "दूध के ठोस पदार्थ" } },
+  KN: { explorer: "ಪದಾರ್ಥ ವಿವರ", what: "ಇದು ಏನು?", why: "Aarambh ಇದನ್ನು ಏಕೆ ತೋರಿಸುತ್ತಿದೆ?", detected: "ಇದು ಘೋಷಿತ ಪದಾರ್ಥಗಳ ಮಾಹಿತಿಯಲ್ಲಿ ಪತ್ತೆಯಾಗಿದೆ. ಇದರ ಪ್ರಸ್ತುತತೆಯನ್ನು ಆಯ್ಕೆ ಮಾಡಿದ ಪ್ರೊಫೈಲ್ ಮತ್ತು ಪದಾರ್ಥ ನಿಯಮಗಳ ಆಧಾರದ ಮೇಲೆ ನಿರ್ಧರಿಸಲಾಗುತ್ತದೆ.", source: "ಮೂಲ: ಡೆಮೊ ಉತ್ಪನ್ನ ಡೇಟಾಸೆಟ್ · ಅಧಿಕೃತ ಉಲ್ಲೇಖವನ್ನು ಬ್ಯಾಕೆಂಡ್ ಆವೃತ್ತಿಯಲ್ಲಿ ಸೇರಿಸಬಹುದು.", description: name => `${name} ಲೇಬಲ್‌ನಲ್ಲಿ ಘೋಷಿಸಲಾದ ಪದಾರ್ಥವಾಗಿದೆ.`, legend: ["ವಿರೋಧವಿಲ್ಲ", "ಪ್ರೊಫೈಲ್‌ಗೆ ಸಂಬಂಧಿಸಿದೆ", "ಸಂಯೋಜಕ", "ಘೋಷಿತ ಅಲರ್ಜೆನ್", "ಭಿನ್ನಾಭಿಪ್ರಾಯಕ್ಕೆ ಕೊಡುಗೆ"], names: { "Whole wheat flour": "ಸಂಪೂರ್ಣ ಗೋಧಿ ಹಿಟ್ಟು", "Vegetable oil": "ಸಸ್ಯಜನ್ಯ ಎಣ್ಣೆ", Sugar: "ಸಕ್ಕರೆ", Salt: "ಉಪ್ಪು", "INS 322 · Lecithins": "INS 322 · ಲೆಸಿಥಿನ್‌ಗಳು", "Milk solids": "ಹಾಲಿನ ಘನ ಪದಾರ್ಥಗಳು" } },
+  TE: { explorer: "పదార్థ వివరాలు", what: "ఇది ఏమిటి?", why: "Aarambh దీన్ని ఎందుకు చూపిస్తోంది?", detected: "ఇది ప్రకటించిన పదార్థాల సమాచారంలో గుర్తించబడింది. దీని ప్రాముఖ్యతను ఎంచుకున్న ప్రొఫైల్ మరియు పదార్థ నియమాల ఆధారంగా నిర్ణయిస్తారు.", source: "మూలం: డెమో ఉత్పత్తి డేటాసెట్ · అధికారిక సూచనను బ్యాకెండ్ వెర్షన్‌లో జోడించవచ్చు.", description: name => `${name} లేబుల్‌పై ప్రకటించిన పదార్థం.`, legend: ["విరోధం లేదు", "ప్రొఫైల్‌కు సంబంధించినది", "సంకలితం", "ప్రకటించిన అలర్జీ కారకం", "వ్యత్యాసానికి కారణం"], names: { "Whole wheat flour": "సంపూర్ణ గోధుమ పిండి", "Vegetable oil": "వెజిటబుల్ ఆయిల్", Sugar: "చక్కెర", Salt: "ఉప్పు", "INS 322 · Lecithins": "INS 322 · లెసిథిన్లు", "Milk solids": "పాల ఘన పదార్థాలు" } },
+  TA: { explorer: "பொருள் விவரம்", what: "இது என்ன?", why: "Aarambh இதை ஏன் காட்டுகிறது?", detected: "இது அறிவிக்கப்பட்ட பொருள் தகவலில் கண்டறியப்பட்டது. இதன் தொடர்பு தேர்ந்தெடுத்த சுயவிவரம் மற்றும் பொருள் விதிகளின் அடிப்படையில் தீர்மானிக்கப்படுகிறது.", source: "மூலம்: டெமோ தயாரிப்பு தரவுத்தொகுப்பு · அதிகாரப்பூர்வ குறிப்பு பின்தள பதிப்பில் சேர்க்கலாம்.", description: name => `${name} லேபிளில் அறிவிக்கப்பட்ட பொருள்.`, legend: ["முரண்பாடு இல்லை", "சுயவிவரத்திற்கு தொடர்புடையது", "சேர்க்கை", "அறிவிக்கப்பட்ட ஒவ்வாமை பொருள்", "முரண்பாட்டிற்கு காரணம்"], names: { "Whole wheat flour": "முழு கோதுமை மாவு", "Vegetable oil": "தாவர எண்ணெய்", Sugar: "சர்க்கரை", Salt: "உப்பு", "INS 322 · Lecithins": "INS 322 · லெசித்தின்கள்", "Milk solids": "பால் திடப்பொருட்கள்" } }
 };
 
 const CHAT_COPY = {
@@ -256,6 +269,7 @@ function App() {
   const [languageOpen, setLanguageOpen] = useState(false);
   const [toast, setToast] = useState("");
   const [scanHistory, setScanHistory] = useState([]);
+  const [clearingScans, setClearingScans] = useState(false);
   const [favorites, setFavorites] = useState([]);
   const [backendReady, setBackendReady] = useState(false);
   const [imageProcessing, setImageProcessing] = useState(false);
@@ -467,6 +481,23 @@ function App() {
     }
   };
 
+  const clearRecentScans = async () => {
+    if (!scanHistory.length || clearingScans) return;
+    if (!window.confirm("Clear all recent scans? This will also remove their captured images and favorites.")) return;
+    setClearingScans(true);
+    try {
+      const result = await api("/scans", { method: "DELETE" });
+      setScanHistory([]);
+      setFavorites([]);
+      setProduct(null);
+      setToast(`${result.deleted || 0} recent scans cleared.`);
+    } catch (error) {
+      setToast(error.message || "Could not clear recent scans.");
+    } finally {
+      setClearingScans(false);
+    }
+  };
+
   const speak = (text) => {
     if (!("speechSynthesis" in window) || typeof SpeechSynthesisUtterance === "undefined") {
       setToast("Speech output is not supported in this browser.");
@@ -527,8 +558,8 @@ function App() {
     <div className="app-shell">
       <aside className="sidebar">
         <div className="brand">
-          <div className="brand-mark">S</div>
-          <div><strong>ASATAS</strong><span>Sahi Scan</span></div>
+          <div className="brand-mark"><img src="/sahi-scan-logo.png" alt="" /></div>
+          <div><strong>Aarambh</strong><span>Sahi Scan</span></div>
         </div>
 
         <nav>
@@ -550,7 +581,7 @@ function App() {
 
       <main className="main">
         <header className="topbar">
-          <div className="mobile-brand"><b>ASATAS</b><span>· Sahi Scan</span></div>
+          <div className="mobile-brand"><img src="/sahi-scan-logo.png" alt="" /><span><b>Aarambh</b> · Sahi Scan</span></div>
           <div className="top-actions">
             <div className="language-menu">
               <button className="language" aria-label="Change language" aria-expanded={languageOpen} onClick={() => setLanguageOpen(open => !open)}><b>{language}</b><span>⌄</span></button>
@@ -601,6 +632,8 @@ function App() {
             scans={scanHistory}
             onOpen={openSavedScan}
             onScan={() => scan()}
+            onClear={clearRecentScans}
+            clearing={clearingScans}
             language={language}
           />
         )}
@@ -647,7 +680,7 @@ function App() {
   );
 }
 
-function RecentScansPage({ scans, onOpen, onScan, language }) {
+function RecentScansPage({ scans, onOpen, onScan, onClear, clearing, language }) {
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState("ALL");
   const filtered = scans.filter(item => {
@@ -660,7 +693,10 @@ function RecentScansPage({ scans, onOpen, onScan, language }) {
     <div className="content">
       <div className="page-title-row">
         <div><p className="eyebrow">MY FOOD DATABASE</p><h1>Recent scans</h1></div>
-        <button className="primary-btn" onClick={onScan}>⌁ Scan food</button>
+        <div className="recent-page-actions">
+          <button className="clear-scans-btn" onClick={onClear} disabled={!scans.length || clearing}>{clearing ? "Clearing…" : "Clear recent scans"}</button>
+          <button className="primary-btn" onClick={onScan}>⌁ Scan food</button>
+        </div>
       </div>
       <section className="card">
         <input className="search-input" value={query} onChange={e => setQuery(e.target.value)} placeholder="Search previous scans..." />
@@ -1169,7 +1205,7 @@ function ScanPage({
         </div>
         <div className={`verdict-badge ${verdict.verdict.toLowerCase()}`}>
           <span>{verdict.verdict === "AGREED" ? "✓" : verdict.verdict === "DISAGREED" ? "!" : "–"}</span>
-          <b>ASATAS {verdict.verdict}</b>
+          <b>Aarambh {verdict.verdict}</b>
           <small>for {profile.name}</small>
         </div>
       </section>
@@ -1194,7 +1230,7 @@ function ScanPage({
           <section className="card">
             <div className="card-title"><div><p className="eyebrow">WHY?</p><h2>Why was it flagged?</h2></div></div>
             <div className={`reason-box ${verdict.verdict.toLowerCase()}`}>
-              <strong>ASATAS {verdict.verdict}</strong>
+              <strong>Aarambh {verdict.verdict}</strong>
               <p>{verdict.reason}</p>
             </div>
             <div className="evidence-row"><span>Selected profile</span><b>{profile.name}</b></div>
@@ -1247,7 +1283,7 @@ function ScanPage({
             <div className="alternative" key={i}>
               <div className="alt-icon">🥨</div>
               <div><b>{a.name}</b><small>Sodium · {a.sodium} mg / 100 g</small></div>
-              <span className="mini-agreed">✓ ASATAS AGREED</span>
+              <span className="mini-agreed">✓ Aarambh AGREED</span>
             </div>
           ))}
         </div>
@@ -1275,7 +1311,7 @@ function DartPage({ onReport, language }) {
   const [step, setStep] = useState(0);
   const steps = [
     { title: "Choose a loose food", body: "Select the food you want to check. This demo starts with milk." },
-    { title: "Check the packet-free sample", body: "Follow the applicable FSSAI DART procedure carefully. ASATAS guides the sequence; it does not replace laboratory testing." },
+    { title: "Check the packet-free sample", body: "Follow the applicable FSSAI DART procedure carefully. Aarambh guides the sequence; it does not replace laboratory testing." },
     { title: "Record what you observe", body: "Use the structured result to decide whether you want to file a food-safety complaint." },
     { title: "Take action", body: "Open the report flow and route the concern through the official FSSAI complaint pathway." }
   ];
@@ -1287,7 +1323,7 @@ function DartPage({ onReport, language }) {
       </div>
       <div className="dart-hero card">
         <div className="dart-icon">🥛</div>
-        <div><p className="eyebrow">DEMO PROTOCOL</p><h2>Milk · possible added water</h2><p>Follow the official DART procedure step by step. ASATAS provides the interface and reminders; it does not claim laboratory certainty.</p></div>
+        <div><p className="eyebrow">DEMO PROTOCOL</p><h2>Milk · possible added water</h2><p>Follow the official DART procedure step by step. Aarambh provides the interface and reminders; it does not claim laboratory certainty.</p></div>
       </div>
       <div className="stepper">
         {steps.map((s, i) => <div key={i} className={`step-dot ${i <= step ? "done" : ""}`}><span>{i + 1}</span><small>{s.title}</small></div>)}
@@ -1517,7 +1553,7 @@ function VoiceModal({ onClose, onSpeak, product, profile }) {
       if (/why|disagree|flag/i.test(text) && product) {
         const sodium = product.nutrition?.sodium;
         if (typeof sodium !== "number") { onSpeak("Sodium information is not available for this scan."); return; }
-        onSpeak(`ASATAS disagreed for ${profile.name}. Sodium is ${sodium} milligrams per 100 grams, compared with the selected preference of ${profile.sodium} milligrams per 100 grams.`);
+        onSpeak(`Aarambh disagreed for ${profile.name}. Sodium is ${sodium} milligrams per 100 grams, compared with the selected preference of ${profile.sodium} milligrams per 100 grams.`);
       } else {
         onSpeak("I can check a product, explain a flag, explain an ingredient, show alternatives, check loose food, or help file a report.");
       }
