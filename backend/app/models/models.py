@@ -30,7 +30,7 @@ class Profile(Base):
 class Product(Base):
     __tablename__ = "products"
     id: Mapped[int] = mapped_column(primary_key=True)
-    barcode: Mapped[str] = mapped_column(String(32), unique=True, index=True)
+    barcode: Mapped[str | None] = mapped_column(String(32), unique=True, index=True, nullable=True)
     code_type: Mapped[str | None] = mapped_column(String(40), nullable=True)
     name: Mapped[str] = mapped_column(String(200))
     brand: Mapped[str] = mapped_column(String(120))
@@ -46,6 +46,7 @@ class Product(Base):
     source_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
     marketer: Mapped[str | None] = mapped_column(String(180), nullable=True)
     image: Mapped[str] = mapped_column(String(500), default="🍽️")
+    image_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
     nutrition = relationship("Nutrition", back_populates="product", uselist=False, cascade="all, delete-orphan")
     ingredients = relationship("Ingredient", back_populates="product", cascade="all, delete-orphan")
     allergens = relationship("Allergen", back_populates="product", cascade="all, delete-orphan")
@@ -134,6 +135,9 @@ class Scan(Base):
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
     profile_id: Mapped[int | None] = mapped_column(ForeignKey("profiles.id", ondelete="SET NULL"), nullable=True)
     product_id: Mapped[int | None] = mapped_column(ForeignKey("products.id", ondelete="SET NULL"), nullable=True)
+    captured_image_path: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    ocr_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    barcode: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
     image_path: Mapped[str | None] = mapped_column(String(500), nullable=True)
     sahi_score: Mapped[float | None] = mapped_column(Float, nullable=True)
     status: Mapped[str] = mapped_column(String(40), default="UNCLEAR")
